@@ -1,0 +1,77 @@
+/* 
+CLIENTSIGHT CURSOR RULES FILE
+
+Purpose:
+Guide the agentic cursor’s behavior for implementing UI changes via real-time gaze tracking and natural language instructions, per ClientSight’s requirements, tech stack, and privacy/security standards.
+
+--------------------------------------------------------------------------------
+1. CERTAINTY REQUIREMENT
+
+- The cursor agent MUST only implement changes when it is ≥95% certain about:
+  - The target element (based on calibrated gaze data, within <80px error and confirmed "lock")
+  - The natural language command (must map to a clear, supported CSS/DOM change, as parsed by the nlpParser utility)
+  - The property value/type (validated and sanitized – must pass all Zod schema checks)
+  - The property/action is on the allowlist of safe CSS modifications
+
+- If <95% certainty in any aspect, DO NOT EXECUTE the change.
+- Instead, PROMPT THE USER with a clear, targeted question to resolve ambiguity (e.g. which element, what command, clarify style/property).
+
+--------------------------------------------------------------------------------
+2. VALIDATION & SECURITY
+
+- Only apply changes to CSS properties explicitly allowlisted in styleApplier.
+- ALL gaze and camera data/processes must occur locally in-browser – NO data is transmitted externally.
+- Run all natural language input through Zod validation/sanitization before execution.
+- Ensure that undo/rollback is supported for every operation; all changes must be fully reversible.
+
+--------------------------------------------------------------------------------
+3. ASK-FIRST POLICY
+
+- If the instruction or the gaze data is unclear, ambiguous, or introduces any risk, always ASK THE USER before proceeding.
+- Examples: “Your command could mean several things. Please clarify.” or “Lock the element you want to modify, then try again.”
+- Never guess or make speculative changes.
+
+--------------------------------------------------------------------------------
+4. TECH STACK & PERFORMANCE
+
+- Only use the specified stack: React 18, TypeScript, WebGazer.js, Zod, TailwindCSS, and included utilities/components. 
+- Do NOT introduce new libraries or unsafe approaches outside what is defined in the repo.
+- Gaze-to-element change latency must remain under 60ms; accuracy must be maintained (<80px error post-calibration).
+- Always test for cross-browser compatibility per the supported list (Chrome 90+/Safari 15+/Firefox 88+/Edge 90+).
+
+--------------------------------------------------------------------------------
+5. ACCESSIBILITY & UX
+
+- All changes must preserve or improve accessibility (no color combos, font changes, or structure that would break usability for any group).
+- Display clear, user-facing error messages/panels for any failed attempt or uncertainty, with simple troubleshooting tips.
+
+--------------------------------------------------------------------------------
+6. LOGGING & EXPLAINABILITY
+
+- Log every applied change (timestamp, selector, parsed instruction, confidence score).
+- Present a human-readable summary explaining what change was made and why.
+- Maintain an undo/redo history for every session.
+
+--------------------------------------------------------------------------------
+7. DEFENSIVE EXECUTION
+
+- Never make changes that violate browser/local security/compliance standards.
+- Do not apply outlandish, destructive, or unsupported modifications (eg. massive or negative values, invalid CSS).
+- When in doubt: default to NO ACTION and escalate to user for clarification.
+
+--------------------------------------------------------------------------------
+8. TEAMWORK WITH CODERABBIT
+
+- If working alongside Coderabbit (or similar agentic/autonomous dev tools):
+  - Before suggesting or implementing code, check the Coderabbit output for context and compatibility.
+  - Share all execution logs and current uncertainty state with Coderabbit for joint decision-making.
+  - Defer to Coderabbit for proposed code if there is any ambiguity – request code reviews or “double confirmation” for uncertain UI changes.
+  - Highlight possible points of failure or uncertainties for both agents to resolve together before implementation.
+  - Never ignore red flags or errors surfaced by Coderabbit; always seek agreement or escalate to a human before executing on low-confidence instructions.
+
+--------------------------------------------------------------------------------
+
+SUMMARY: Cursor must operate with ruthless precision and conservatism – only act when fully certain, communicate openly with both users and Coderabbit, and never compromise on privacy, accessibility, security, or dev best practices.
+
+END OF RULES FILE
+*/
