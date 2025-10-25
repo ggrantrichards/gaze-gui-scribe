@@ -1,3 +1,6 @@
+# ClientSight - Gaze-Powered AI UI Builder
+## Cal Hacks 12.0 Project
+
 # Welcome to your Lovable project
 
 ## Project info
@@ -50,15 +53,41 @@ npm run dev
 - Click on "New codespace" to launch a new Codespace environment.
 - Edit files directly within the Codespace and commit and push your changes once you're done.
 
+## ✨ NEW: AI Component Generation (Cal Hacks 12.0)
+
+**Powered by Fetch.ai Agents** - Generate React components from text prompts and optimize them with gaze data!
+
+### Quick Start:
+1. Press `Cmd/Ctrl + Alt + C` to open AI generation panel
+2. Type: "Create a modern login form"
+3. Watch AI generate the component
+4. Look at it - AI will suggest optimizations based on where you actually look!
+
+See `CAL_HACKS_SETUP.md` for full setup guide.
+
+### Prize Eligibility:
+- 🏆 Fetch.ai Best Use: $2,500
+- 🏆 Fetch.ai Agentverse: $1,500  
+- 🏆 MLH Best AI: Logitech Webcam
+- 🏆 .tech Domain: Blue Snowball Mic
+
+**Total Value:** $4,200+ in prizes
+
+---
+
 ## What technologies are used for this project?
 
-This project is built with:
-
+### Core Stack:
 - Vite
 - TypeScript
 - React
 - shadcn-ui
 - Tailwind CSS
+
+### Cal Hacks 12.0 Integrations:
+- **Fetch.ai** - Multi-agent AI system ($4,000 in prizes)
+- WebGazer.js - Real-time eye tracking
+- OpenAI GPT-4 - Fallback AI generation
 
 ## How can I deploy this project?
 
