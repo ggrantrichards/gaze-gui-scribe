@@ -1,3 +1,4 @@
+
 export type Pt = { x: number; y: number }
 
 export function median(arr: number[]): number {
@@ -5,6 +6,14 @@ export function median(arr: number[]): number {
   const a = arr.slice().sort((x, y) => x - y)
   const m = Math.floor(a.length / 2)
   return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2
+}
+
+export function mad(points: Pt[]): number {
+  if (!points.length) return 0
+  const mx = median(points.map(p => p.x))
+  const my = median(points.map(p => p.y))
+  const ds = points.map(p => Math.hypot(p.x - mx, p.y - my))
+  return median(ds)
 }
 
 export function mean(arr: number[]): number {
@@ -15,10 +24,7 @@ export function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v))
 }
 
-/**
- * Simple dwell detector:
- * returns true if last K points are within 'radius' of their centroid.
- */
+/** Simple dwell detector (px space). */
 export function isDwelled(points: Pt[], k = 15, radius = 24): boolean {
   if (points.length < k) return false
   const tail = points.slice(-k)
@@ -30,11 +36,18 @@ export function isDwelled(points: Pt[], k = 15, radius = 24): boolean {
   return true
 }
 
-/**
- * Weighted affine fit raw → target.
- * x' = a x + b y + tx
- * y' = c x + d y + ty
- */
+/* ---------------- Normalization helpers ---------------- */
+
+export type Viewport = { W: number; H: number }
+export function toUnit(p: Pt, v: Viewport): Pt {
+  return { x: p.x / v.W, y: p.y / v.H }
+}
+export function toPx(p: Pt, v: Viewport): Pt {
+  return { x: p.x * v.W, y: p.y * v.H }
+}
+
+/* ---------------- Affine (existing) ---------------- */
+
 export function fitAffineWeighted(raw: Pt[], tgt: Pt[], w?: number[]) {
   const n = Math.min(raw.length, tgt.length)
   if (n < 3) return { A: [[1, 0], [0, 1]] as [[number, number], [number, number]], b: [0, 0] as [number, number] }
@@ -59,11 +72,28 @@ export function fitAffineWeighted(raw: Pt[], tgt: Pt[], w?: number[]) {
   return { A, b }
 }
 
-/**
- * Optional mild quadratic warp for stubborn corners.
- * x' = a0 + a1 x + a2 y + a3 x^2 + a4 xy + a5 y^2
- * y' = b0 + b1 x + b2 y + b3 x^2 + b4 xy + b5 y^2
- */
+export function applyAffine(p: Pt, T: { A: [[number, number], [number, number]]; b: [number, number] }): Pt {
+  return {
+    x: T.A[0][0] * p.x + T.A[0][1] * p.y + T.b[0],
+    y: T.A[1][0] * p.x + T.A[1][1] * p.y + T.b[1],
+  }
+}
+
+/** Convert affine fitted in unit-space to pixel-space coefficients. */
+export function affineUnitToPx(Tu: { A: [[number, number], [number, number]]; b: [number, number] }, v: Viewport) {
+  const S = { sx: 1 / v.W, sy: 1 / v.H }
+  const D = { dx: v.W, dy: v.H }
+  // Apx = D * A * S, bpx = D * b
+  const Apx: [[number, number], [number, number]] = [
+    [ D.dx * Tu.A[0][0] * S.sx, D.dx * Tu.A[0][1] * S.sy ],
+    [ D.dy * Tu.A[1][0] * S.sx, D.dy * Tu.A[1][1] * S.sy ],
+  ]
+  const bpx: [number, number] = [ D.dx * Tu.b[0], D.dy * Tu.b[1] ]
+  return { A: Apx, b: bpx }
+}
+
+/* ---------------- Quadratic (existing + conversion) ---------------- */
+
 export function fitQuadraticWeighted(raw: Pt[], tgt: Pt[], w?: number[]) {
   const n = Math.min(raw.length, tgt.length)
   if (n < 6) return null
@@ -85,14 +115,7 @@ export function fitQuadraticWeighted(raw: Pt[], tgt: Pt[], w?: number[]) {
   if (!A) return null
   const ax = mulVec(A, mulVec(Phit, X))
   const ay = mulVec(A, mulVec(Phit, Y))
-  return { ax, ay } // two 6-coef vectors
-}
-
-export function applyAffine(p: Pt, T: { A: [[number, number], [number, number]]; b: [number, number] }): Pt {
-  return {
-    x: T.A[0][0] * p.x + T.A[0][1] * p.y + T.b[0],
-    y: T.A[1][0] * p.x + T.A[1][1] * p.y + T.b[1],
-  }
+  return { ax, ay } // unit-space coefficients
 }
 
 export function applyQuadratic(p: Pt, Q: { ax: number[]; ay: number[] }): Pt {
@@ -101,15 +124,37 @@ export function applyQuadratic(p: Pt, Q: { ax: number[]; ay: number[] }): Pt {
   return { x: dot(Q.ax, v), y: dot(Q.ay, v) }
 }
 
-/**
- * RANSAC wrapper: robustly fit affine by rejecting outliers.
- * Returns inliers used and the transform.
- */
+/** Convert unit-space quadratic to pixel-space basis [1, x, y, x^2, xy, y^2]. */
+export function quadUnitToPx(Q: { ax: number[]; ay: number[] }, v: Viewport) {
+  const [a0,a1,a2,a3,a4,a5] = Q.ax
+  const [b0,b1,b2,b3,b4,b5] = Q.ay
+  const W = v.W, H = v.H
+  const ax_px = [
+    W*a0,
+    a1,
+    (W/H)*a2,
+    a3 / W,
+    a4 / H,
+    W * a5 / (H*H)
+  ]
+  const ay_px = [
+    H*b0,
+    (H/W)*b1,
+    b2,
+    H * b3 / (W*W),
+    b4 / W,
+    b5 / H
+  ]
+  return { ax: ax_px, ay: ay_px }
+}
+
+/* ---------------- RANSAC wrapper (existing) ---------------- */
+
 export function ransacAffine(
   raw: Pt[],
   tgt: Pt[],
   w?: number[],
-  thresholdPx = 60,
+  threshold = 0.02, // unit-space threshold (≈ 2% of screen)
   maxIter = 120
 ) {
   const n = Math.min(raw.length, tgt.length)
@@ -119,7 +164,6 @@ export function ransacAffine(
   let bestCount = 0
 
   for (let it = 0; it < maxIter; it++) {
-    // sample 3 pairs
     const idxs = sampleDistinct(n, 3)
     const r3 = idxs.map(i => raw[i])
     const t3 = idxs.map(i => tgt[i])
@@ -131,16 +175,13 @@ export function ransacAffine(
     for (let i = 0; i < n; i++) {
       const p = applyAffine(raw[i], T)
       const e = Math.hypot(p.x - tgt[i].x, p.y - tgt[i].y)
-      if (e <= thresholdPx) { inl[i] = true; count++ }
+      if (e <= threshold) { inl[i] = true; count++ }
     }
     if (count > bestCount) { bestCount = count; bestInliers = inl }
     if (bestCount > 0.9 * n) break
   }
 
-  // refit with inliers
-  const rInl: Pt[] = []
-  const tInl: Pt[] = []
-  const wInl: number[] = []
+  const rInl: Pt[] = [], tInl: Pt[] = [], wInl: number[] = []
   for (let i = 0; i < n; i++) if (bestInliers[i]) {
     rInl.push(raw[i]); tInl.push(tgt[i]); wInl.push(w ? w[i] : 1)
   }
@@ -148,7 +189,87 @@ export function ransacAffine(
   return { inliers: bestInliers, T: Tfinal }
 }
 
-// ——— linalg helpers ———
+/* ---------------- RBF fallback (unit-space) ---------------- */
+
+export type RBFModel = {
+  centers: Pt[]
+  wx: number[]; wy: number[]
+  ax: [number, number, number]; ay: [number, number, number] // affine tail: c0 + c1 x + c2 y
+  sigma: number
+}
+
+/** Fit simple Gaussian RBF: f(p) = sum_i w_i exp(-||p-c_i||^2 / (2σ^2)) + a0 + a1 x + a2 y */
+export function fitRBFWeightedNormalized(raw: Pt[], tgt: Pt[], w?: number[], sigma = 0.12): RBFModel | null {
+  const n = Math.min(raw.length, tgt.length)
+  if (n < 6) return null
+  const W = (w && w.length === n) ? w : new Array(n).fill(1)
+  const Phi = new Array(n).fill(0).map(() => new Array(n + 3).fill(0)) // n RBFs + 3 affine
+  for (let i = 0; i < n; i++) {
+    const wi = Math.max(1e-6, W[i])
+    for (let j = 0; j < n; j++) {
+      const r = Math.hypot(raw[i].x - raw[j].x, raw[i].y - raw[j].y)
+      Phi[i][j] = wi * Math.exp(- (r*r) / (2 * sigma * sigma))
+    }
+    // affine tail
+    Phi[i][n + 0] = wi * 1
+    Phi[i][n + 1] = wi * raw[i].x
+    Phi[i][n + 2] = wi * raw[i].y
+  }
+  const Phit = transpose(Phi)
+  const G = mul(Phit, Phi)
+  const invG = inv(G)
+  if (!invG) return null
+  const X = mulVec(Phit, tgt.map((t,i)=> (W[i]||1)*t.x))
+  const Y = mulVec(Phit, tgt.map((t,i)=> (W[i]||1)*t.y))
+  const solX = mulVec(invG, X)
+  const solY = mulVec(invG, Y)
+  return {
+    centers: raw.slice(),
+    wx: solX.slice(0, n),
+    wy: solY.slice(0, n),
+    ax: [solX[n+0], solX[n+1], solX[n+2]] as [number,number,number],
+    ay: [solY[n+0], solY[n+1], solY[n+2]] as [number,number,number],
+    sigma
+  }
+}
+
+export function applyRBF(p: Pt, M: RBFModel): Pt {
+  const k = (c: Pt) => Math.exp(- ( (p.x-c.x)*(p.x-c.x) + (p.y-c.y)*(p.y-c.y) ) / (2 * M.sigma * M.sigma))
+  let fx = M.ax[0] + M.ax[1]*p.x + M.ax[2]*p.y
+  let fy = M.ay[0] + M.ay[1]*p.x + M.ay[2]*p.y
+  for (let i = 0; i < M.centers.length; i++) {
+    const K = k(M.centers[i])
+    fx += M.wx[i] * K
+    fy += M.wy[i] * K
+  }
+  return { x: fx, y: fy }
+}
+
+/* ---------------- Transform composition ---------------- */
+
+export type Affine = { A: [[number,number],[number,number]], b: [number,number] }
+export type Quad = { ax: number[]; ay: number[] }
+
+export type TransformChain = {
+  affine?: Affine
+  quad?: Quad
+  rbf?: { model: RBFModel, viewport: Viewport } // RBF fitted in unit-space, applied by normalizing
+  viewport: Viewport
+}
+
+export function applyChainPixel(p_px: Pt, T: TransformChain): Pt {
+  const v = T.viewport
+  let p: Pt = { ...p_px }
+  if (T.affine) p = applyAffine(p, T.affine)
+  if (T.quad)   p = applyQuadratic(p, T.quad)
+  if (T.rbf)    p = toPx(applyRBF(toUnit(p, v), T.rbf.model), v)
+  return {
+    x: clamp(p.x, 0, v.W),
+    y: clamp(p.y, 0, v.H)
+  }
+}
+
+/* ---------------- linalg helpers (existing) ---------------- */
 
 function transpose(A: number[][]): number[][] {
   return A[0].map((_, j) => A.map(row => row[j]))
@@ -171,7 +292,6 @@ function inv(A: number[][] | null): number[][] | null {
   if (!A) return null
   const n = A.length
   const M = A.map((row, i) => row.concat(...new Array(n).fill(0).map((_, j) => (i === j ? 1 : 0))))
-  // Gauss-Jordan
   for (let i = 0; i < n; i++) {
     let p = i
     for (let r = i + 1; r < n; r++) if (Math.abs(M[r][i]) > Math.abs(M[p][i])) p = r
@@ -202,7 +322,6 @@ function solve6(A: number[][], b: number[]): number[] {
   }
   return M.map(row => row[n])
 }
-
 function sampleDistinct(n: number, k: number) {
   const a = Array.from({ length: n }, (_, i) => i)
   for (let i = n - 1; i > 0; i--) {
