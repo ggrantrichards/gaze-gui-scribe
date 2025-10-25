@@ -1,41 +1,35 @@
-import { GazePoint, ElementLock } from '@/types';
+import React from 'react'
+import type { GazePoint, ElementLock } from '@/types'
 
-interface GazeOverlayProps {
-  gazePoint: GazePoint | null;
-  lockedElement: ElementLock | null;
-}
-
-export function GazeOverlay({ gazePoint, lockedElement }: GazeOverlayProps) {
+export function GazeOverlay({ gazePoint, lockedElement }: { gazePoint: GazePoint | null, lockedElement: ElementLock | null }) {
   return (
     <>
-      {/* Gaze cursor */}
       {gazePoint && (
-        <div
-          className="fixed pointer-events-none z-[9998] w-6 h-6 rounded-full border-2 border-primary bg-primary/20 transition-all duration-75"
-          style={{
-            left: `${gazePoint.x}px`,
-            top: `${gazePoint.y}px`,
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
+        <div style={{
+          position:'fixed',
+          left: gazePoint.x - 10,
+          top: gazePoint.y - 10,
+          width:20, height:20,
+          borderRadius:'50%',
+          border:'2px solid #22d3ee',
+          background:'rgba(34,211,238,0.25)',
+          pointerEvents:'none',
+          zIndex: 9999
+        }}/>
       )}
-
-      {/* Locked element highlight */}
       {lockedElement && (
-        <div
-          className="fixed pointer-events-none z-[9997] border-4 border-primary bg-primary/10 rounded transition-all duration-200"
-          style={{
-            left: `${lockedElement.bbox.x}px`,
-            top: `${lockedElement.bbox.y}px`,
-            width: `${lockedElement.bbox.w}px`,
-            height: `${lockedElement.bbox.h}px`,
-          }}
-        >
-          <div className="absolute -top-6 left-0 px-2 py-1 bg-primary text-primary-foreground text-xs rounded">
-            {lockedElement.role}
-          </div>
-        </div>
+        <div style={{
+          position:'absolute',
+          left: lockedElement.bbox.x,
+          top: lockedElement.bbox.y,
+          width: lockedElement.bbox.w,
+          height: lockedElement.bbox.h,
+          border:'2px dashed #a78bfa',
+          borderRadius: 8,
+          pointerEvents:'none',
+          zIndex: 9998
+        }}/>
       )}
     </>
-  );
+  )
 }

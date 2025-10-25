@@ -1,80 +1,38 @@
-import { Intent, ElementLock } from '@/types';
+import type { ElementLock, Intent } from '@/types'
 
-export interface ApplyResult {
-  success: boolean;
-  message: string;
-  appliedStyles?: Record<string, string>;
+export function captureStyles(el: HTMLElement, props: string[]): Record<string,string> {
+  const cs = window.getComputedStyle(el)
+  const snapshot: Record<string,string> = {}
+  for (const p of props) snapshot[p] = (cs as any)[p] ?? ''
+  return snapshot
 }
 
-/**
- * Apply intent to locked element with validation
- */
-export function applyIntent(lock: ElementLock, intent: Intent): ApplyResult {
-  if (!lock.element || !document.body.contains(lock.element)) {
-    return { success: false, message: 'Element no longer exists' };
+export function revertStyles(lock: ElementLock) {
+  for (const [k,v] of Object.entries(lock.originalStyles)) {
+    ;(lock.element.style as any)[k] = v
   }
+}
 
-  try {
-    if (intent.action === 'text.replace') {
-      const newText = intent.targetProps.text as string;
-      if (!newText) {
-        return { success: false, message: 'No text provided' };
-      }
-      lock.element.textContent = newText;
-      return { 
-        success: true, 
-        message: `Changed text to: "${newText}"`,
-        appliedStyles: { textContent: newText }
-      };
+const ALLOWLIST = new Set([
+  'backgroundColor','color','fontSize','padding','margin',
+  'borderRadius','border','width','height'
+])
+
+export function applyIntent(lock: ElementLock, intent: Intent): { success:boolean; message:string } {
+  if (intent.action === 'text.replace') {
+    if ('innerText' in lock.element) {
+      lock.element.innerText = intent.newText || ''
+      return { success:true, message:`Text set to “${intent.newText}”.` }
     }
+    return { success:false, message:'Target element has no innerText.' }
+  }
 
-    if (intent.action === 'style.update') {
-      const appliedStyles: Record<string, string> = {};
-      
-      for (const [prop, value] of Object.entries(intent.targetProps)) {
-        const styleValue = String(value);
-        (lock.element.style as any)[prop] = styleValue;
-        appliedStyles[prop] = styleValue;
-      }
-
-      const summary = Object.entries(appliedStyles)
-        .map(([k, v]) => `${k} → ${v}`)
-        .join(', ');
-
-      return { 
-        success: true, 
-        message: `Applied: ${summary}`,
-        appliedStyles 
-      };
+  if (intent.action === 'style.update' && intent.targetProps) {
+    for (const [prop, val] of Object.entries(intent.targetProps)) {
+      if (!ALLOWLIST.has(prop)) return { success:false, message:`Property ${prop} not allowed.` }
+      ;(lock.element.style as any)[prop] = String(val)
     }
-
-    return { success: false, message: 'Unknown action type' };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}` 
-    };
+    return { success:true, message:`Applied ${Object.keys(intent.targetProps).join(', ')}.` }
   }
-}
-
-/**
- * Revert element to original styles
- */
-export function revertStyles(lock: ElementLock): void {
-  if (!lock.element || !document.body.contains(lock.element)) return;
-
-  for (const [prop, value] of Object.entries(lock.originalStyles)) {
-    (lock.element.style as any)[prop] = value;
-  }
-}
-
-/**
- * Capture current styles of an element
- */
-export function captureStyles(element: HTMLElement, props: string[]): Record<string, string> {
-  const styles: Record<string, string> = {};
-  for (const prop of props) {
-    styles[prop] = (element.style as any)[prop] || '';
-  }
-  return styles;
+  return { success:false, message:'Unsupported intent.' }
 }

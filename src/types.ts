@@ -1,34 +1,22 @@
-import { z } from 'zod';
-
-export const IntentSchema = z.object({
-  action: z.enum(['style.update', 'text.replace']),
-  targetProps: z.record(z.string(), z.union([z.string(), z.number()])),
-});
-
-export const ElementLockSchema = z.object({
-  id: z.string(),
-  role: z.string(),
-  bbox: z.object({ 
-    x: z.number(), 
-    y: z.number(), 
-    w: z.number(), 
-    h: z.number() 
-  }),
-  element: z.custom<HTMLElement>(),
-  originalStyles: z.record(z.string(), z.string()),
-});
-
-export type Intent = z.infer<typeof IntentSchema>;
-export type ElementLock = z.infer<typeof ElementLockSchema>;
-
 export interface GazePoint {
-  x: number;
-  y: number;
-  timestamp: number;
+  x: number; // pixel X
+  y: number; // pixel Y
+  timestamp: number; // ms
+  confidence?: number;
 }
 
-export interface CalibrationPoint {
-  x: number;
-  y: number;
-  index: number;
-}
+export type IntentAction = 'style.update' | 'text.replace';
+
+export type Intent = {
+  action: IntentAction;
+  targetProps?: Record<string, string | number>;
+  newText?: string;
+};
+
+export type ElementLock = {
+  id: string;
+  role: string;
+  bbox: { x: number; y: number; w: number; h: number };
+  element: HTMLElement;
+  originalStyles: Record<string,string>;
+};

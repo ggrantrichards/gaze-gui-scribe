@@ -1,100 +1,42 @@
-import { Intent } from '@/types';
+import type { Intent } from '@/types'
 
-/**
- * Parse natural language instructions into structured CSS updates
- */
-export function parseInstruction(text: string): Intent | null {
-  const normalized = text.toLowerCase().trim();
-  
-  // Style update patterns
-  const colorPatterns = [
-    { regex: /(?:make|change|set).*(?:color|background).*?(#[0-9a-f]{3,6}|rgb\([^)]+\)|[a-z]+)/i, prop: 'backgroundColor' },
-    { regex: /(?:make|change|set).*?(?:to\s+)?(?:color\s+)?(red|blue|green|yellow|purple|orange|pink|black|white|gray)/i, prop: 'backgroundColor' },
-  ];
-  
-  const sizePatterns = [
-    { regex: /(?:make|set).*?(?:font|text).*?(\d+)(?:px|pt)/i, prop: 'fontSize', unit: 'px' },
-    { regex: /(?:make|set).*?(?:width).*?(\d+)(?:px|%)/i, prop: 'width', unit: 'px' },
-    { regex: /(?:make|set).*?(?:height).*?(\d+)(?:px|%)/i, prop: 'height', unit: 'px' },
-  ];
-  
-  const borderPatterns = [
-    { regex: /(?:add|make|set).*?(?:rounded|border-radius).*?(\d+)(?:px)?/i, prop: 'borderRadius', unit: 'px' },
-    { regex: /(?:add|make|set).*?(?:border).*?(\d+)(?:px)?/i, prop: 'border', template: (val: string) => `${val}px solid currentColor` },
-  ];
-  
-  const paddingPatterns = [
-    { regex: /(?:increase|add|set).*?(?:padding).*?(\d+)(?:px)?/i, prop: 'padding', unit: 'px' },
-  ];
+const namedColors: Record<string,string> = {
+  red:'#ef4444', blue:'#3b82f6', green:'#10b981', yellow:'#f59e0b',
+  purple:'#8b5cf6', orange:'#f97316', pink:'#ec4899', black:'#000000', white:'#ffffff'
+}
 
-  const textPatterns = [
-    { regex: /(?:change|set|replace).*?(?:text|label).*?(?:to|with)\s+['""]([^'"]+)['""]?/i },
-    { regex: /(?:change|set|replace).*?(?:text|label).*?(?:to|with)\s+(.+)$/i },
-  ];
+export function parseInstruction(instruction: string): Intent | null {
+  const t = instruction.trim().toLowerCase()
+  if (!t) return null
 
-  const targetProps: Record<string, string | number> = {};
+  // text replacement
+  const textMatch = t.match(/change\s+text\s+to\s+['"](.+?)['"]/)
+  if (textMatch) return { action:'text.replace', newText: textMatch[1] }
 
-  // Check text replacement first
-  for (const pattern of textPatterns) {
-    const match = normalized.match(pattern.regex);
-    if (match) {
-      return {
-        action: 'text.replace',
-        targetProps: { text: match[1].trim() },
-      };
-    }
+  // color names / hex
+  const targetProps: Record<string, string | number> = {}
+  const colorName = Object.keys(namedColors).find(c => t.includes(`make this ${c}`) || t.includes(`make it ${c}`) || t.includes(`set color to ${c}`) || t.includes(`set background to ${c}`))
+  if (colorName) {
+    if (t.includes('background') || t.includes('bg')) targetProps['backgroundColor'] = namedColors[colorName]
+    else targetProps['color'] = namedColors[colorName]
+  }
+  const hex = t.match(/#([0-9a-f]{3}|[0-9a-f]{6})/i)
+  if (hex) targetProps['backgroundColor'] = hex[0]
+
+  // font size
+  const fs = t.match(/font\s*size\s*(?:to|=)?\s*(\d+)\s*px/)
+  if (fs) targetProps['fontSize'] = `${fs[1]}px`
+
+  // padding
+  const pad = t.match(/padding\s*(?:to|=|by)?\s*(\d+)\s*px?/)
+  if (pad) targetProps['padding'] = `${pad[1]}px`
+
+  // border radius
+  if (t.includes('rounded corners') || t.match(/border\s*radius/)) {
+    const r = t.match(/(\d+)\s*px/)
+    targetProps['borderRadius'] = r ? `${r[1]}px` : '8px'
   }
 
-  // Check color patterns
-  for (const pattern of colorPatterns) {
-    const match = normalized.match(pattern.regex);
-    if (match) {
-      let color = match[1];
-      // Convert color names to hex
-      const colorMap: Record<string, string> = {
-        red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#eab308',
-        purple: '#a855f7', orange: '#f97316', pink: '#ec4899', black: '#000000',
-        white: '#ffffff', gray: '#6b7280',
-      };
-      color = colorMap[color.toLowerCase()] || color;
-      targetProps[pattern.prop] = color;
-    }
-  }
-
-  // Check size patterns
-  for (const pattern of sizePatterns) {
-    const match = normalized.match(pattern.regex);
-    if (match) {
-      targetProps[pattern.prop] = `${match[1]}${pattern.unit}`;
-    }
-  }
-
-  // Check border patterns
-  for (const pattern of borderPatterns) {
-    const match = normalized.match(pattern.regex);
-    if (match) {
-      if (pattern.template) {
-        targetProps[pattern.prop] = pattern.template(match[1]);
-      } else {
-        targetProps[pattern.prop] = `${match[1]}${pattern.unit}`;
-      }
-    }
-  }
-
-  // Check padding patterns
-  for (const pattern of paddingPatterns) {
-    const match = normalized.match(pattern.regex);
-    if (match) {
-      targetProps[pattern.prop] = `${match[1]}${pattern.unit}`;
-    }
-  }
-
-  if (Object.keys(targetProps).length > 0) {
-    return {
-      action: 'style.update',
-      targetProps,
-    };
-  }
-
-  return null;
+  if (Object.keys(targetProps).length > 0) return { action:'style.update', targetProps }
+  return null
 }
