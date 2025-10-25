@@ -7,6 +7,7 @@ import { AutoSuggestionPanel } from '@/components/AutoSuggestionPanel'
 import NewPage from '@/pages/NewPage'
 import { parseInstruction } from '@/utils/nlpParser'
 import { applyIntent, captureStyles, revertStyles } from '@/utils/styleApplier'
+import { parseInstructionSmart } from '../utils/nlpParser'
 import type { ElementLock } from '@/types'
 
 export default function Index() {
@@ -88,15 +89,15 @@ export default function Index() {
     return () => window.removeEventListener('keydown', onKey)
   }, [lockGazedElement, showInstructionPanel])
 
-  const handleInstructionSubmit = (text: string) => {
+  const handleInstructionSubmit = async (text: string) => {
     if (!lockedElement) return
-    const intent = parseInstruction(text)
-    if (!intent) { setLastResult('❌ Could not understand instruction. Try: “Make this blue”'); return }
+    const intent = await parseInstructionSmart(text, lockedElement.element)
+    if (!intent) { setLastResult('❌ Could not understand instruction. Try: “Make this blue”.'); return }
     const result = applyIntent(lockedElement, intent)
     setLastResult(result.success ? `✅ ${result.message}` : `❌ ${result.message}`)
     if (result.success) setHistory([...history, lockedElement])
     setSeedSuggestion(undefined)
-  }
+  }  
 
   const handleUndo = () => {
     if (!history.length) return
