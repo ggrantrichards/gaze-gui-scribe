@@ -1,4 +1,10 @@
 import type { Intent } from '@/types'
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+const result = await model.generateContent("Hello Gemini!");
 
 const namedColors: Record<string,string> = {
   red:'#ef4444', blue:'#3b82f6', green:'#10b981', yellow:'#f59e0b',
