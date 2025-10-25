@@ -9,13 +9,21 @@ export function parseInstruction(instruction: string): Intent | null {
   const t = instruction.trim().toLowerCase()
   if (!t) return null
 
+  // page-creation hints (no-op here but kept for future extensibility)
+  if (/\bcreate\b|\badd\b.*\bpage\b/.test(t)) {
+    return { action:'style.update', targetProps: {} } // placeholder for page-level intents
+  }
+
   // text replacement
   const textMatch = t.match(/change\s+text\s+to\s+['"](.+?)['"]/)
   if (textMatch) return { action:'text.replace', newText: textMatch[1] }
 
   // color names / hex
   const targetProps: Record<string, string | number> = {}
-  const colorName = Object.keys(namedColors).find(c => t.includes(`make this ${c}`) || t.includes(`make it ${c}`) || t.includes(`set color to ${c}`) || t.includes(`set background to ${c}`))
+  const colorName = Object.keys(namedColors).find(c =>
+    t.includes(`make this ${c}`) || t.includes(`make it ${c}`) ||
+    t.includes(`set color to ${c}`) || t.includes(`set background to ${c}`)
+  )
   if (colorName) {
     if (t.includes('background') || t.includes('bg')) targetProps['backgroundColor'] = namedColors[colorName]
     else targetProps['color'] = namedColors[colorName]

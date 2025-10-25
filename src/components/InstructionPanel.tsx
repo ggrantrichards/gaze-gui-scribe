@@ -1,13 +1,22 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
-export function InstructionPanel({ onSubmit, onClose, elementRole, lastResult }:
-  { onSubmit: (instruction:string)=>void, onClose:()=>void, elementRole:string, lastResult:string }) {
-  const [value, setValue] = useState('Make this blue')
+export function InstructionPanel({
+  onSubmit, onClose, elementRole, lastResult, seedText
+}: {
+  onSubmit: (instruction: string) => void
+  onClose: () => void
+  elementRole: string
+  lastResult: string
+  seedText?: string
+}) {
+  const [value, setValue] = useState(seedText || 'Make this blue')
+
+  useEffect(() => {
+    if (seedText) setValue(seedText)
+  }, [seedText])
 
   return (
-    <div style={{
-      position:'fixed', right:24, bottom:24, zIndex:9998
-    }}>
+    <div style={{ position:'fixed', right:24, bottom:24, zIndex:9998 }}>
       <div className="card" style={{ width: 360 }}>
         <div style={{ fontWeight:700, marginBottom:8 }}>Modify {elementRole}</div>
         <input
