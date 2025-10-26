@@ -6,6 +6,7 @@ import { InstructionPanel } from '@/components/InstructionPanel'
 import { AutoSuggestionPanel } from '@/components/AutoSuggestionPanel'
 import { ComponentGenerationPanel } from '@/components/ComponentGenerationPanel'
 import { LiveComponentPreview } from '@/components/LiveComponentPreview'
+import { FullPageBuilder } from '@/components/FullPageBuilder'
 import NewPage from '@/pages/NewPage'
 import { parseInstruction } from '@/utils/nlpParser'
 import { parseInstructionSmart } from '../utils/nlpParser'
@@ -34,6 +35,7 @@ export default function Index() {
   const [generatedComponents, setGeneratedComponents] = useState<ComponentNode[]>([])
   const [recentGazeData, setRecentGazeData] = useState<GazePoint[]>([])
   const [previewComponent, setPreviewComponent] = useState<ComponentNode | null>(null)
+  const [showPageBuilder, setShowPageBuilder] = useState(false)
   
   // Collect gaze data for AI optimization (keep last 200 points)
   useEffect(() => {
@@ -85,7 +87,7 @@ export default function Index() {
     }
   }, [currentGaze, getElementAtGaze])
 
-  // Hotkeys: Cmd/Ctrl+Alt+G to lock; Cmd/Ctrl+Alt+C to create; Esc to close panel; Cmd/Ctrl+Alt+N new page
+  // Hotkeys: Cmd/Ctrl+Alt+G to lock; Cmd/Ctrl+Alt+C to create; Cmd/Ctrl+Alt+P for Page Builder; Esc to close panel; Cmd/Ctrl+Alt+N new page
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
@@ -97,6 +99,10 @@ export default function Index() {
       if (meta && key === 'c') {
         e.preventDefault()
         setShowComponentPanel(prev => !prev)
+      }
+      if (meta && key === 'p') {
+        e.preventDefault()
+        setShowPageBuilder(prev => !prev)
       }
       if (meta && key === 'n') {
         e.preventDefault()
@@ -110,11 +116,17 @@ export default function Index() {
         if (showComponentPanel) {
           setShowComponentPanel(false)
         }
+        if (showPageBuilder) {
+          setShowPageBuilder(false)
+        }
+        if (previewComponent) {
+          setPreviewComponent(null)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [lockGazedElement, showInstructionPanel, showComponentPanel])
+  }, [lockGazedElement, showInstructionPanel, showComponentPanel, showPageBuilder, previewComponent])
   
   const handleComponentGenerated = useCallback((component: ComponentNode) => {
     setGeneratedComponents(prev => [...prev, component])
@@ -182,8 +194,15 @@ export default function Index() {
       <div className="row" style={{ marginBottom:16 }}>
         <div className="card">
           <h2 style={{ marginTop:0 }}>🚀 AI Generation (NEW)</h2>
-          <p className="muted">Create components from text prompts using Fetch.ai agents</p>
+          <p className="muted">Build full pages like v0/Bolt.new with gaze-driven optimization</p>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button 
+              className="btn" 
+              style={{ background: '#3b82f6', borderColor: '#3b82f6' }}
+              onClick={() => setShowPageBuilder(true)}
+            >
+              🏗️ Page Builder
+            </button>
             <button 
               className="btn" 
               style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
@@ -203,6 +222,7 @@ export default function Index() {
         <div className="card">
           <h2 style={{ marginTop:0 }}>Controls</h2>
           <ul className="muted">
+            <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>P</kbd> → Page Builder</li>
             <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd> → AI Generate</li>
             <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>G</kbd> → Lock Element</li>
             <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>N</kbd> → New Page</li>
@@ -305,6 +325,15 @@ export default function Index() {
         <LiveComponentPreview
           component={previewComponent}
           onClose={() => setPreviewComponent(null)}
+        />
+      )}
+      
+      {/* Full Page Builder (v0/Bolt.new style) */}
+      {showPageBuilder && (
+        <FullPageBuilder
+          currentGaze={currentGaze}
+          recentGazeData={recentGazeData}
+          onClose={() => setShowPageBuilder(false)}
         />
       )}
     </div>
