@@ -34,3 +34,7 @@ status
 # Firebase
 .firebase
 firebase-debug.log
+
+# Local Netlify folder
+.netlify
+.env
