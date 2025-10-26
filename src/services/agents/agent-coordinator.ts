@@ -155,6 +155,38 @@ export class AgentCoordinator {
   }
 
   /**
+   * Generate multiple sections for a landing page (NEW!)
+   * Returns array of sections instead of single component
+   */
+  async generateMultiSection(
+    request: ComponentGenerationRequest
+  ): Promise<{ sections: ComponentGenerationResponse[], is_multi_section: boolean, page_type: string }> {
+    const backendURL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+    
+    try {
+      console.log('🏗️ Calling multi-section API:', request.prompt)
+      
+      const response = await fetch(`${backendURL}/api/generate-multi-section`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request)
+      })
+      
+      if (!response.ok) {
+        throw new Error(`Multi-section API error: ${response.statusText}`)
+      }
+      
+      const result = await response.json()
+      console.log(`✅ Multi-section API returned ${result.sections?.length || 0} sections`)
+      
+      return result
+    } catch (error) {
+      console.error('Multi-section generation failed:', error)
+      throw error
+    }
+  }
+
+  /**
    * Call Python backend API (which uses Fetch.ai uAgents)
    */
   private async callBackendAPI<T>(url: string, payload: any): Promise<T> {

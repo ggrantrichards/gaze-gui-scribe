@@ -6,7 +6,7 @@ import { InstructionPanel } from '@/components/InstructionPanel'
 import { AutoSuggestionPanel } from '@/components/AutoSuggestionPanel'
 import { ComponentGenerationPanel } from '@/components/ComponentGenerationPanel'
 import { LiveComponentPreview } from '@/components/LiveComponentPreview'
-import { FullPageBuilder } from '@/components/FullPageBuilder'
+import { FullPageBuilderWithProjects } from '@/components/FullPageBuilderWithProjects'
 import NewPage from '@/pages/NewPage'
 import { parseInstruction } from '@/utils/nlpParser'
 import { parseInstructionSmart } from '../utils/nlpParser'
@@ -328,9 +328,9 @@ export default function Index() {
         />
       )}
       
-      {/* Full Page Builder (v0/Bolt.new style) */}
+      {/* Full Page Builder (v0/Bolt.new style) with Project Management */}
       {showPageBuilder && (
-        <FullPageBuilder
+        <FullPageBuilderWithProjects
           currentGaze={currentGaze}
           recentGazeData={recentGazeData}
           onClose={() => setShowPageBuilder(false)}

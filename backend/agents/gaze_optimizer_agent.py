@@ -105,10 +105,10 @@ async def handle_optimization_request(ctx: Context, sender: str, msg: GazeOptimi
             heatmap_zones=heatmap
         )
         
-        ctx.logger.info(f"✅ Found {len(suggestions)} optimization opportunities")
+        ctx.logger.info(f"[OK] Found {len(suggestions)} optimization opportunities")
         
     except Exception as e:
-        ctx.logger.error(f"❌ Optimization failed: {str(e)}")
+        ctx.logger.error(f"[ERROR] Optimization failed: {str(e)}")
         response_msg = GazeOptimizationResponse(
             request_id=msg.request_id,
             suggestions=[],

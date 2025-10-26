@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import type { GazePoint } from '../types'
 import {
   applyAffine, applyQuadratic, Pt,
@@ -51,66 +51,111 @@ export function useGazeTracker() {
   const paused = useRef(false)
   const flipXRef = useRef(false)
 
-  const chainRef = useRef<TransformChain>({
-    viewport: { W: window.innerWidth, H: window.innerHeight }
-  })
-
-  useEffect(() => {
-    // load persisted calibration if available
+  // Load calibration BEFORE initializing the ref
+  const loadedCalibration = useMemo(() => {
     const loaded = loadCalibration()
     if (loaded) {
-      chainRef.current = loaded
-      setState(s => ({ ...s, isCalibrated: true }))
+      console.log('[GazeTracker] Loaded persisted calibration:', {
+        hasAffine: !!loaded.affine,
+        hasQuad: !!loaded.quad,
+        hasRBF: !!loaded.rbf,
+        viewport: loaded.viewport
+      })
+      return loaded
+    } else {
+      console.log('[GazeTracker] No persisted calibration found')
+      return { viewport: { W: window.innerWidth, H: window.innerHeight } }
     }
   }, [])
 
+  const chainRef = useRef<TransformChain>(loadedCalibration)
+
   useEffect(() => {
+    // Update calibration state if we loaded calibration
+    if (loadedCalibration.affine || loadedCalibration.quad || loadedCalibration.rbf) {
+      setState(s => ({ ...s, isCalibrated: true }))
+    }
+  }, [loadedCalibration.affine, loadedCalibration.quad, loadedCalibration.rbf])
+
+  useEffect(() => {
+    const setupGazeListener = (wg: any) => {
+      wg.setGazeListener((data: any, ts: number) => {
+        if (paused.current || !data) return
+        let gx = data.x, gy = data.y
+        if (flipXRef.current) gx = window.innerWidth - gx
+
+        const p = applyChainPixel({ x: gx, y: gy }, chainRef.current)
+
+        // EMA smoothing
+        const alpha = 0.35
+        if (!ema.current) ema.current = { x: p.x, y: p.y }
+        else {
+          ema.current.x = alpha * p.x + (1 - alpha) * ema.current.x
+          ema.current.y = alpha * p.y + (1 - alpha) * ema.current.y
+        }
+
+        setState(s => ({
+          ...s,
+          currentGaze: {
+            x: ema.current!.x,
+            y: ema.current!.y,
+            timestamp: ts,
+            confidence: data?.confidence ?? 1
+          }
+        }))
+      })
+    }
+
     const start = () => {
       const wg = window.webgazer
       if (!wg) {
         setState(s => ({ ...s, error: 'WebGazer unavailable' }))
         return
       }
-      wg.setRegression('ridge')
-        .setTracker('clmtrackr')
-        .showPredictionPoints(false)
-        .showVideoPreview(true)
-        .showFaceOverlay(true)
-        .showFaceFeedbackBox(true)
-        .applyKalmanFilter(false)
-        .setGazeListener((data: any, ts: number) => {
-          if (paused.current || !data) return
-          let gx = data.x, gy = data.y
-          if (flipXRef.current) gx = window.innerWidth - gx
 
-          const p = applyChainPixel({ x: gx, y: gy }, chainRef.current)
+      // Check if WebGazer is already running (from previous mount/calibration)
+      const isAlreadyRunning = wg.params && wg.params.videoElementCanvas
 
-          // EMA smoothing
-          const alpha = 0.35
-          if (!ema.current) ema.current = { x: p.x, y: p.y }
-          else {
-            ema.current.x = alpha * p.x + (1 - alpha) * ema.current.x
-            ema.current.y = alpha * p.y + (1 - alpha) * ema.current.y
-          }
-
-          setState(s => ({
-            ...s,
-            currentGaze: {
-              x: ema.current!.x,
-              y: ema.current!.y,
-              timestamp: ts,
-              confidence: data?.confidence ?? 1
-            }
-          }))
-        })
-      wg.begin().then(() => {
+      if (isAlreadyRunning) {
+        // WebGazer is already running, just set up our listener
+        console.log('[GazeTracker] WebGazer already running, attaching listener')
+        setupGazeListener(wg)
+        setState(s => ({ ...s, isInitialized: true }))
+        
+        // Ensure video container is styled correctly
         setTimeout(() => {
           try {
-            document.querySelector('#webgazerVideoContainer')?.setAttribute('style', 'position:fixed;left:50%;top:10%;transform:translate(-50%,0);width:220px;z-index:99990;border-radius:8px;overflow:hidden;')
+            const container = document.querySelector('#webgazerVideoContainer')
+            if (container) {
+              container.setAttribute('style', 'position:fixed;left:50%;top:10%;transform:translate(-50%,0);width:220px;z-index:99990;border-radius:8px;overflow:hidden;')
+            }
           } catch {}
-        }, 500)
-        setState(s => ({ ...s, isInitialized: true }))
-      })
+        }, 100)
+      } else {
+        // First time initialization
+        console.log('[GazeTracker] Starting WebGazer for first time')
+        wg.setRegression('ridge')
+          .setTracker('clmtrackr')
+          .showPredictionPoints(false)
+          .showVideoPreview(true)
+          .showFaceOverlay(true)
+          .showFaceFeedbackBox(true)
+          .applyKalmanFilter(false)
+
+        setupGazeListener(wg)
+
+        wg.begin().then(() => {
+          setTimeout(() => {
+            try {
+              document.querySelector('#webgazerVideoContainer')?.setAttribute('style', 'position:fixed;left:50%;top:10%;transform:translate(-50%,0);width:220px;z-index:99990;border-radius:8px;overflow:hidden;')
+            } catch {}
+          }, 500)
+          setState(s => ({ ...s, isInitialized: true }))
+        }).catch((err: any) => {
+          console.error('[GazeTracker] Error starting WebGazer:', err)
+          setState(s => ({ ...s, error: 'Failed to start WebGazer' }))
+        })
+      }
     }
 
     if (!window.webgazer) {
@@ -124,10 +169,11 @@ export function useGazeTracker() {
       start()
     }
 
+    // Don't clear the gaze listener on unmount - WebGazer should persist
+    // This allows calibration to carry over when navigating between pages
     return () => {
-      try {
-        window.webgazer?.clearGazeListener?.()
-      } catch {}
+      // Intentionally empty - WebGazer persists across route changes
+      console.log('[GazeTracker] Component unmounting, keeping WebGazer running')
     }
   }, [])
 
@@ -139,6 +185,12 @@ export function useGazeTracker() {
     error: state.error,
 
     completeCalibration: () => {
+      console.log('[GazeTracker] Calibration completed:', {
+        hasAffine: !!chainRef.current.affine,
+        hasQuad: !!chainRef.current.quad,
+        hasRBF: !!chainRef.current.rbf,
+        viewport: chainRef.current.viewport
+      })
       setState(s => ({ ...s, isCalibrated: true }))
       saveCalibration(chainRef.current)
     },
@@ -150,14 +202,17 @@ export function useGazeTracker() {
     },
 
     setAffine: (A: [[number,number],[number,number]], b: [number,number]) => {
+      console.log('[GazeTracker] Setting affine transformation')
       chainRef.current.affine = { A, b }
       saveCalibration(chainRef.current)
     },
     setQuadratic: (Q: { ax: number[], ay: number[] }) => {
+      console.log('[GazeTracker] Setting quadratic transformation')
       chainRef.current.quad = Q
       saveCalibration(chainRef.current)
     },
     setRBFUnit: (rbfModel: any) => {
+      console.log('[GazeTracker] Setting RBF transformation')
       chainRef.current.rbf = { model: rbfModel, viewport: chainRef.current.viewport }
       saveCalibration(chainRef.current)
     },

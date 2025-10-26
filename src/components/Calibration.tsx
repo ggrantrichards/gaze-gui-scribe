@@ -240,16 +240,18 @@ export function Calibration({ onComplete, onSkip }: Props) {
     let stop = false
 
     const run = async () => {
-      // dwell-gate before sampling for this dot
+      // dwell-gate before sampling for this dot with TIMEOUT
       let guard = 0
-      while (!stop && guard < 1000) {
+      const maxAttempts = 200 // 200 * 10ms = 2 seconds max wait
+      while (!stop && guard < maxAttempts) {
         guard++
         await new Promise(r => setTimeout(r, SAMPLE_SPACING_MS))
         const ready = isDwelled(recent.current, 15, 24)
         const confOk = (currentGaze?.confidence ?? 0) >= 0.6
         if (ready && confOk) break
       }
-      // collect ~20 samples and compute pixel errors
+      
+      // If we timed out, collect whatever we have anyway (graceful degradation)
       const errs: number[] = []
       for (let i = 0; i < 20; i++) {
         if (currentGaze) {
@@ -259,7 +261,20 @@ export function Calibration({ onComplete, onSkip }: Props) {
         }
         await new Promise(r => setTimeout(r, 16))
       }
-      setValSamples(errs)
+      
+      // Ensure we have at least some data, use fallback if needed
+      if (errs.length < 5 && recent.current.length > 0) {
+        // Use recent buffer as fallback
+        const fallbackCount = Math.min(20, recent.current.length)
+        for (let i = recent.current.length - fallbackCount; i < recent.current.length; i++) {
+          const p = recent.current[i]
+          const dx = p.x - targetPx.x
+          const dy = p.y - targetPx.y
+          errs.push(Math.hypot(dx, dy))
+        }
+      }
+      
+      setValSamples(errs.length > 0 ? errs : [100]) // fallback to moderate error if no data
     }
     run()
     return () => { stop = true }
@@ -325,14 +340,20 @@ export function Calibration({ onComplete, onSkip }: Props) {
       if (e.key.toLowerCase() === 'f') setFlipX((prev: boolean) => !prev as any)
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        if (validating) nextValidation()
-        else advanceOrFit() // click-OR-keyboard triggers a calibration burst
+        if (validating) {
+          // Only advance if we have data collected
+          if (valSamples.length > 0) {
+            nextValidation()
+          }
+        } else {
+          advanceOrFit() // click-OR-keyboard triggers a calibration burst
+        }
       }
       if (e.key === 'Escape' && onSkip) { e.preventDefault(); onSkip() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [advanceOrFit, nextValidation, onSkip, setFlipX, validating])
+  }, [advanceOrFit, nextValidation, onSkip, setFlipX, validating, valSamples.length])
 
   return (
     <>
@@ -348,8 +369,9 @@ export function Calibration({ onComplete, onSkip }: Props) {
       {/* Calibration/Validation dot */}
       <button
         onClick={validating ? nextValidation : advanceOrFit}
+        disabled={validating && valSamples.length === 0}
         title={validating
-          ? 'Look at the dot, dwell, then press Enter/Space or click to advance'
+          ? (valSamples.length > 0 ? 'Click to advance to next validation point' : 'Looking at the dot... please wait')
           : 'Look at the dot and click (or press Enter/Space) to record a burst'}
         style={{
           position: 'fixed',
@@ -357,10 +379,20 @@ export function Calibration({ onComplete, onSkip }: Props) {
           top: `${current.y * 100}vh`,
           transform: 'translate(-50%, -50%)',
           width: 30, height: 30, borderRadius: '50%',
-          background: validating ? '#0b1220' : '#111827',
-          border: '4px solid #10b981',
-          boxShadow: '0 0 0 8px rgba(255,255,255,0.12)',
-          cursor: 'pointer', zIndex: 99998, pointerEvents: 'auto',
+          background: validating 
+            ? (valSamples.length > 0 ? '#059669' : '#0b1220')  // green when ready in validation
+            : '#111827',
+          border: validating && valSamples.length > 0 
+            ? '4px solid #10b981' 
+            : '4px solid #6b7280',
+          boxShadow: validating && valSamples.length > 0
+            ? '0 0 0 8px rgba(16,185,129,0.3), 0 0 16px rgba(16,185,129,0.6)'
+            : '0 0 0 8px rgba(255,255,255,0.12)',
+          cursor: validating && valSamples.length === 0 ? 'wait' : 'pointer', 
+          zIndex: 99998, 
+          pointerEvents: 'auto',
+          opacity: validating && valSamples.length === 0 ? 0.6 : 1,
+          transition: 'all 0.3s ease',
         }}
       />
 
@@ -412,7 +444,9 @@ export function Calibration({ onComplete, onSkip }: Props) {
           <>
             <div style={{ fontWeight: 800, marginBottom: 6 }}>Validate mapping</div>
             <p style={{ fontSize: 14, color: '#cbd5e1', margin: '4px 0 8px' }}>
-              Dwell on each dot, then press Enter/Space (or click) to confirm.
+              Look at each dot briefly, then <b>click it</b> (or press Enter/Space) to move to the next point. 
+              {valSamples.length === 0 && <span style={{ color: '#fbbf24' }}> Collecting data...</span>}
+              {valSamples.length > 0 && <span style={{ color: '#10b981' }}> ✓ Ready to advance</span>}
             </p>
             <div style={{ marginTop: 4, color: '#94a3b8' }}>
               Validation point {validationIdx + 1} / {VALIDATION_DOTS.length}
@@ -428,7 +462,14 @@ export function Calibration({ onComplete, onSkip }: Props) {
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button className="btn" onClick={nextValidation}>Next</button>
+              <button 
+                className="btn" 
+                onClick={nextValidation}
+                disabled={valSamples.length === 0}
+                style={{ opacity: valSamples.length === 0 ? 0.5 : 1 }}
+              >
+                {valSamples.length === 0 ? 'Collecting...' : 'Next Point'}
+              </button>
               <button className="btn secondary" onClick={() => setFlipX((prev: boolean) => !prev as any)}>Toggle Flip X (F)</button>
             </div>
           </>
