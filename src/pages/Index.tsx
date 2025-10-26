@@ -20,10 +20,10 @@ export default function Index() {
     setFlipX, setFlipY, toggleDemoMode
   } = useGazeTracker()
   
-  // Keep Y-axis inverted, but restore X-axis to normal
+  // No axis inversions - pure, direct tracking
   useEffect(() => {
     setFlipX(false)
-    setFlipY(true)
+    setFlipY(false)
   }, [setFlipX, setFlipY])
 
   const [showCalibration, setShowCalibration] = useState(false)

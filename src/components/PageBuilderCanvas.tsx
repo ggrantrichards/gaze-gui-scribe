@@ -118,16 +118,54 @@ export function PageBuilderCanvas({
       ref={canvasRef}
       className="w-full h-full bg-gray-50 overflow-auto relative"
     >
-      {/* Gaze Cursor Overlay */}
+      {/* Gaze Cursor Overlay - BIGGER and SMOOTHER just like main page */}
       {currentGaze && (
-        <div
-          className="fixed w-4 h-4 bg-red-500 rounded-full pointer-events-none z-50 opacity-70"
-          style={{
-            left: currentGaze.x - 8,
-            top: currentGaze.y - 8,
-            transform: 'translate(0, 0)'
-          }}
-        />
+        <>
+          {/* Outer pulse ring - BIGGER */}
+          <div
+            className="fixed rounded-full pointer-events-none z-50"
+            style={{
+              left: currentGaze.x,
+              top: currentGaze.y,
+              width: 50,
+              height: 50,
+              border: `3px solid ${currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444'}`,
+              animation: 'pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              transform: 'translate(-50%, -50%)',
+            }}
+          />
+          
+          {/* Main gaze dot - MUCH BIGGER for better visibility */}
+          <div
+            className="fixed rounded-full pointer-events-none z-50"
+            style={{
+              left: currentGaze.x,
+              top: currentGaze.y,
+              width: 32,
+              height: 32,
+              border: `4px solid ${currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444'}`,
+              background: currentGaze.trackingQuality === 'excellent' ? 'rgba(16, 185, 129, 0.4)' : currentGaze.trackingQuality === 'poor' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)',
+              boxShadow: currentGaze.trackingQuality === 'excellent' ? '0 0 30px rgba(16, 185, 129, 0.7)' : currentGaze.trackingQuality === 'good' ? '0 0 25px rgba(59, 130, 246, 0.6)' : '0 0 15px rgba(34, 211, 238, 0.4)',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              transform: 'translate(-50%, -50%)',
+            }}
+          />
+          
+          {/* Inner highlight dot */}
+          <div
+            className="fixed rounded-full pointer-events-none z-50"
+            style={{
+              left: currentGaze.x,
+              top: currentGaze.y,
+              width: 12,
+              height: 12,
+              background: currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444',
+              animation: 'quality-pulse 1.5s ease-in-out infinite',
+              transform: 'translate(-50%, -50%)',
+              boxShadow: '0 0 8px rgba(255, 255, 255, 0.8)',
+            }}
+          />
+        </>
       )}
 
       {/* Page Sections */}

@@ -115,10 +115,10 @@ function makeNode(kind: NodeKind, at: GazePoint, props: Record<string, any> = {}
 export default function NewPage() {
   const { currentGaze, getElementAtGaze, setFlipX, setFlipY } = useGazeTracker()
   
-  // Keep Y-axis inverted, but restore X-axis to normal
+  // No axis inversions - pure, direct tracking
   useEffect(() => {
     setFlipX(false)
-    setFlipY(true)
+    setFlipY(false)
   }, [setFlipX, setFlipY])
   
   const [prompt, setPrompt] = useState('add a primary button that says "Save"')
@@ -282,9 +282,12 @@ export default function NewPage() {
     <div className="container">
       <style>{`
         .gaze-pointer {
-          position: absolute; width: 18px; height: 18px; border-radius: 50%;
-          border: 2px solid rgba(59,130,246,.9); box-shadow: 0 0 0 2px rgba(59,130,246,.25);
+          position: absolute; width: 32px; height: 32px; border-radius: 50%;
+          border: 4px solid rgba(59,130,246,.9); 
+          background: rgba(59,130,246,.4);
+          box-shadow: 0 0 20px rgba(59,130,246,.7);
           transform: translate(-50%, -50%); pointer-events: none; z-index: 9998;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .gaze-focus {
           outline: 2px solid rgba(59,130,246,.4);
