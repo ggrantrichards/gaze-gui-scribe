@@ -1,0 +1,18 @@
+.muted {
+    opacity: .72;
+    font-size: 0.92rem;
+  }
+  
+  /* Subtle gaze highlight used by NewPage + Index */
+  .gaze-focus {
+    outline: 2px solid rgba(59,130,246,.4) !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.18) !important;
+    transition: box-shadow .12s ease, outline-color .12s ease;
+  }
+  
+  /* Generic code block styling (used in AI code preview) */
+  pre code {
+    white-space: pre;
+    word-break: break-word;
+  }
+  
