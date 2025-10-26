@@ -129,46 +129,48 @@ export class AgentCoordinator {
 
   /**
    * Call a Fetch.ai agent
-   * For hackathon: Simulates agent communication with local AI
-   * For production: Would use actual Fetch.ai agent protocol
+   * Routes to Python backend which coordinates with real Fetch.ai uAgents
    */
   private async callAgent<T>(
     agentAddress: string,
     action: string,
     payload: any
   ): Promise<T> {
-    // If using local agents (development)
-    if (agentAddress === 'local' || import.meta.env.DEV) {
-      return this.localAgentCall<T>(action, payload)
+    // Check if backend API is available
+    const backendURL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+    
+    try {
+      // Try real Fetch.ai agents via Python backend first
+      if (action === 'generate_component') {
+        return await this.callBackendAPI<T>(`${backendURL}/api/generate-component`, payload)
+      } else if (action === 'optimize_component') {
+        return await this.callBackendAPI<T>(`${backendURL}/api/optimize-gaze`, payload)
+      }
+    } catch (error) {
+      console.warn('Backend API unavailable, falling back to local agents:', error)
     }
+    
+    // Fallback to local agents if backend is not running
+    return this.localAgentCall<T>(action, payload)
+  }
 
-    // If using deployed Fetch.ai agents (production/demo)
-    const message: AgentMessage = {
-      from: 'clientsight-frontend',
-      to: agentAddress,
-      payload: {
-        type: 'request',
-        data: { action, ...payload }
-      },
-      timestamp: Date.now()
-    }
-
-    // Send to Fetch.ai agent via HTTP
-    const response = await fetch(`${import.meta.env.VITE_AGENTVERSE_URL}/message`, {
+  /**
+   * Call Python backend API (which uses Fetch.ai uAgents)
+   */
+  private async callBackendAPI<T>(url: string, payload: any): Promise<T> {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${import.meta.env.VITE_AGENTVERSE_API_KEY}`
       },
-      body: JSON.stringify(message)
+      body: JSON.stringify(payload)
     })
 
     if (!response.ok) {
-      throw new Error(`Agent call failed: ${response.statusText}`)
+      throw new Error(`Backend API error: ${response.statusText}`)
     }
 
-    const result = await response.json()
-    return result.payload.data as T
+    return await response.json() as T
   }
 
   /**

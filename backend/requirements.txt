@@ -1,0 +1,25 @@
+# Fetch.ai uAgents SDK - Core agent framework
+uagents==0.13.0
+
+# FastAPI - REST API server for frontend communication
+# Compatible with uagents requirements
+fastapi>=0.109.0
+uvicorn[standard]>=0.30.1,<0.31.0
+pydantic>=2.7,<2.8
+
+# OpenAI - For component generation
+openai>=1.10.0
+
+# CORS - Allow frontend to connect
+python-multipart>=0.0.6
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Data validation
+email-validator>=2.1.0
+
+# Async support
+httpx>=0.26.0
+aiofiles>=23.2.1
+

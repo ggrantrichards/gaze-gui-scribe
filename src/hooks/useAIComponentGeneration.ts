@@ -84,9 +84,15 @@ export function useAIComponentGeneration({
       setLastGenerated(component)
       setProgress('Done!')
       
+      console.log('🎯 Component created:', component)
+      
       // Callback to parent
       if (onComponentGenerated) {
+        console.log('📞 Calling onComponentGenerated callback')
         onComponentGenerated(component)
+        console.log('✅ Callback completed')
+      } else {
+        console.warn('⚠️ No onComponentGenerated callback provided!')
       }
 
       // Auto-clear progress after 2 seconds
