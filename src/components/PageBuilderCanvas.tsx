@@ -39,6 +39,16 @@ export function PageBuilderCanvas({
   // Render each section's HTML
   const renderSection = (section: PageSection) => {
     try {
+      // Safety checks
+      if (!section || !section.component || !section.component.code) {
+        return (
+          <div key={section?.id || 'invalid'} className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-yellow-800 font-semibold">Invalid section data</p>
+            <p className="text-sm text-yellow-600">Missing component or code</p>
+          </div>
+        )
+      }
+      
       // Create a sandboxed iframe for each section
       const html = buildSectionHTML(section.component.code)
       
@@ -176,7 +186,7 @@ export function PageBuilderCanvas({
 
       {/* Page Sections */}
       <div className="max-w-7xl mx-auto">
-        {sections.length === 0 ? (
+        {!sections || sections.length === 0 ? (
           <div className="flex items-center justify-center h-96">
             <div className="text-center">
               <div className="text-6xl mb-4">🎨</div>
@@ -192,7 +202,7 @@ export function PageBuilderCanvas({
       </div>
 
       {/* Page Stats */}
-      {sections.length > 0 && (
+      {sections && sections.length > 0 && (
         <div className="fixed bottom-4 left-4 bg-slate-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg">
           📄 {sections.length} section{sections.length !== 1 ? 's' : ''}
         </div>

@@ -51,7 +51,7 @@ export function FullPageBuilder({
 
   const { generateComponent, isGenerating, progress, error } = useAIComponentGeneration({
     gazeData: recentGazeData,
-    onComponentGenerated: (component) => {
+    onComponentGenerated: (component: ComponentNode) => {
       console.log('🎉 Component generated callback fired!', component)
       // Add new section to page
       const newSection: PageSection = {
@@ -227,16 +227,16 @@ export function FullPageBuilder({
         <div className="flex-1 overflow-auto bg-gray-50">
           {showCode ? (
             <div className="p-4 font-mono text-sm">
-              {sections.sort((a, b) => a.order - b.order).map(section => (
+              {(sections || []).sort((a, b) => a.order - b.order).map(section => (
                 <div key={section.id} className="mb-6 bg-white p-4 rounded-lg shadow">
-                  <div className="text-xs text-gray-500 mb-2">{section.component.name}</div>
-                  <pre className="text-xs overflow-auto">{section.component.code}</pre>
+                  <div className="text-xs text-gray-500 mb-2">{section.component?.name || 'Unknown'}</div>
+                  <pre className="text-xs overflow-auto">{section.component?.code || 'No code available'}</pre>
                 </div>
               ))}
             </div>
           ) : (
             <PageBuilderCanvas
-              sections={sections}
+              sections={sections || []}
               onSectionClick={setSelectedSection}
               onSectionRemove={handleSectionRemove}
               onSectionReorder={handleSectionReorder}
