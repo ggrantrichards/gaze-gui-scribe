@@ -241,9 +241,15 @@ function buildSectionHTML(componentCode: string): string {
         componentName = nameMatch[1]
       } else {
         // Try: const ComponentName =
-        nameMatch = componentCode.match(/const\s+(\w+)/)
+        nameMatch = componentCode.match(/const\s+(\w+)\s*=/)
         if (nameMatch) {
           componentName = nameMatch[1]
+        } else {
+          // Try: arrow function const name = () =>
+          nameMatch = componentCode.match(/const\s+(\w+)\s*=\s*\(/)
+          if (nameMatch) {
+            componentName = nameMatch[1]
+          }
         }
       }
     }
@@ -251,7 +257,7 @@ function buildSectionHTML(componentCode: string): string {
 
   console.log('🔨 Building HTML for:', componentName)
   console.log('📝 Code length:', componentCode.length, 'chars')
-  console.log('📄 First 200 chars:', componentCode.substring(0, 200))
+  console.log('📄 Code preview:', componentCode.substring(0, 300))
 
   return `<!DOCTYPE html>
 <html lang="en">

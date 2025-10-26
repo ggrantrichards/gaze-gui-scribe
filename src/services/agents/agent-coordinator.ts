@@ -78,24 +78,61 @@ export class AgentCoordinator {
   async generateComponent(
     request: ComponentGenerationRequest
   ): Promise<ComponentGenerationResponse> {
-    const agent = this.agents.get('component-generator')
-    if (!agent) throw new Error('Component Generator agent not found')
-
-    this.updateAgentStatus('component-generator', 'processing')
+    // Fallback to OpenAI if agents not available
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+    
+    if (!apiKey) {
+      throw new Error('OpenAI API key not found. Add VITE_OPENAI_API_KEY to .env file.')
+    }
 
     try {
-      // For Cal Hacks demo: Use local AI with agent wrapper
-      // In production: Send to actual Fetch.ai agent on Agentverse
-      const response = await this.callAgent<ComponentGenerationResponse>(
-        agent.address,
-        'generate_component',
-        request
-      )
+      console.log('🤖 Generating component with OpenAI...')
+      
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4-turbo-preview',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a React/TypeScript component generator. Generate clean, modern React components with Tailwind CSS. Return ONLY the component code without imports or exports, just the pure component JSX.`
+            },
+            {
+              role: 'user',
+              content: `Create a ${request.prompt} component in React with Tailwind CSS. Make it modern and functional.`
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 2000
+        })
+      })
 
-      this.updateAgentStatus('component-generator', 'idle')
-      return response
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      const code = data.choices[0]?.message?.content || ''
+      
+      // Extract code if wrapped in markdown
+      const codeMatch = code.match(/```(?:tsx?|jsx?)?\n([\s\S]*?)```/)
+      const cleanCode = codeMatch ? codeMatch[1].trim() : code.trim()
+      
+      console.log('✅ Component generated successfully')
+      
+      return {
+        code: cleanCode,
+        componentType: request.prompt,
+        dependencies: [],
+        agentId: 'openai-direct',
+        timestamp: Date.now()
+      }
     } catch (error) {
-      this.updateAgentStatus('component-generator', 'error')
+      console.error('❌ Component generation failed:', error)
       throw error
     }
   }
