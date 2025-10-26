@@ -23,13 +23,15 @@ const firebaseConfig = {
 }
 
 // Initialize Firebase (singleton pattern)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
+// const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
 
 // Initialize services
 export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const storage = getStorage(app)
 export const googleProvider = new GoogleAuthProvider()
+
 
 // Initialize Analytics (only in browser)
 export const analytics = typeof window !== 'undefined' 
@@ -49,4 +51,3 @@ googleProvider.setCustomParameters({
 })
 
 export default app
-
