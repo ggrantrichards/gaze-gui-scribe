@@ -113,7 +113,14 @@ function makeNode(kind: NodeKind, at: GazePoint, props: Record<string, any> = {}
 }
 
 export default function NewPage() {
-  const { currentGaze, getElementAtGaze } = useGazeTracker()
+  const { currentGaze, getElementAtGaze, setFlipX, setFlipY } = useGazeTracker()
+  
+  // Keep Y-axis inverted, but restore X-axis to normal
+  useEffect(() => {
+    setFlipX(false)
+    setFlipY(true)
+  }, [setFlipX, setFlipY])
+  
   const [prompt, setPrompt] = useState('add a primary button that says "Save"')
   const [editText, setEditText] = useState('make this blue with rounded corners')
   const [nodes, setNodes] = useState<NodeDef[]>([])

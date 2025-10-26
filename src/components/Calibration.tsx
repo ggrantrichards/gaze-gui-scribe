@@ -55,6 +55,7 @@ export function Calibration({ onComplete, onSkip }: Props) {
   const [validationIdx, setValidationIdx] = useState(0)
   const [valSamples, setValSamples] = useState<number[]>([]) // store pixel errors for current dot
   const [overallErrors, setOverallErrors] = useState<number[]>([]) // all validation errors
+  const [flipX, setFlipXState] = useState(false) // Track flip state locally
 
   const recent = useRef<Pt[]>([]) // rolling px buffer
   const vref = useRef<Viewport>({ W: window.innerWidth, H: window.innerHeight })
@@ -319,10 +320,17 @@ export function Calibration({ onComplete, onSkip }: Props) {
     }
   }, [valSamples, validationIdx, overallErrors, completeCalibration, onComplete, setQuadratic, setRBFUnit])
 
+  // Sync local flipX with tracker
+  useEffect(() => {
+    setFlipX(flipX)
+  }, [flipX, setFlipX])
+
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'f') setFlipX((prev: boolean) => !prev as any)
+      if (e.key.toLowerCase() === 'f') {
+        setFlipXState(prev => !prev)
+      }
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         if (validating) nextValidation()
@@ -332,7 +340,7 @@ export function Calibration({ onComplete, onSkip }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [advanceOrFit, nextValidation, onSkip, setFlipX, validating])
+  }, [advanceOrFit, nextValidation, onSkip, validating])
 
   return (
     <>
@@ -363,6 +371,33 @@ export function Calibration({ onComplete, onSkip }: Props) {
           cursor: 'pointer', zIndex: 99998, pointerEvents: 'auto',
         }}
       />
+
+      {/* Instructions overlay */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 40,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 99998,
+          pointerEvents: 'none',
+          background: 'rgba(15, 23, 42, 0.95)',
+          border: '2px solid #22d3ee',
+          borderRadius: 12,
+          padding: 16,
+          maxWidth: 500,
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+          {validating ? 'Validation Phase' : `Calibration Step ${idx + 1} of ${seq.length}`}
+        </div>
+        <div style={{ color: '#94a3b8', fontSize: 14 }}>
+          {validating 
+            ? 'Look at each dot and wait a moment. This validates accuracy.'
+            : 'Look directly at the dot, then click or press Enter/Space. Repeat 5 times.'}
+        </div>
+      </div>
 
       {/* Under-dot press/burst counter (calibration only) */}
       {!validating && (
@@ -429,7 +464,7 @@ export function Calibration({ onComplete, onSkip }: Props) {
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button className="btn" onClick={nextValidation}>Next</button>
-              <button className="btn secondary" onClick={() => setFlipX((prev: boolean) => !prev as any)}>Toggle Flip X (F)</button>
+              <button className="btn secondary" onClick={() => setFlipXState(prev => !prev)}>Toggle Flip X (F)</button>
             </div>
           </>
         )}

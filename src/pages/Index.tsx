@@ -15,9 +15,16 @@ import type { ElementLock, ComponentNode, GazePoint } from '@/types'
 
 export default function Index() {
   const {
-    isInitialized, isCalibrated, currentGaze, error,
-    completeCalibration, resetCalibration, pauseTracking, resumeTracking, getElementAtGaze
+    isInitialized, isCalibrated, currentGaze, error, demoMode,
+    completeCalibration, resetCalibration, pauseTracking, resumeTracking, getElementAtGaze,
+    setFlipX, setFlipY, toggleDemoMode
   } = useGazeTracker()
+  
+  // Keep Y-axis inverted, but restore X-axis to normal
+  useEffect(() => {
+    setFlipX(false)
+    setFlipY(true)
+  }, [setFlipX, setFlipY])
 
   const [showCalibration, setShowCalibration] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -232,7 +239,23 @@ export default function Index() {
             <button className="btn secondary" onClick={togglePause}>{isPaused ? 'Resume' : 'Pause'} Tracking</button>
             <button className="btn secondary" onClick={handleUndo} style={{ marginLeft:8 }}>Undo ({history.length})</button>
             <button className="btn secondary" onClick={handleRecalibrate} style={{ marginLeft:8 }}>Recalibrate</button>
+            <button 
+              className="btn" 
+              onClick={toggleDemoMode} 
+              style={{ marginLeft:8, background: demoMode ? '#10b981' : '#3b82f6', borderColor: demoMode ? '#10b981' : '#3b82f6' }}
+            >
+              {demoMode ? '🔴 Demo Mode ON' : '🎭 Try Demo Mode'}
+            </button>
             <span className="muted" style={{ marginLeft:12 }}>Status: {isCalibrated ? '🟢 Calibrated' : '🟡 Not calibrated'}</span>
+            {currentGaze?.trackingQuality && (
+              <span style={{ marginLeft:12, fontSize:12, color: 
+                currentGaze.trackingQuality === 'excellent' ? '#10b981' : 
+                currentGaze.trackingQuality === 'good' ? '#3b82f6' : 
+                currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444' 
+              }}>
+                • {currentGaze.trackingQuality.toUpperCase()} tracking
+              </span>
+            )}
             <label style={{ marginLeft:12, fontSize:12 }}>
               <input type="checkbox" checked={showSuggestions} onChange={e=>setShowSuggestions(e.target.checked)} /> Show suggestions
             </label>

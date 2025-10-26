@@ -45,11 +45,15 @@ export function useGazeTracker() {
     isCalibrated: false,
     currentGaze: null as GazePoint | null,
     error: null as string | null,
+    demoMode: false,
   })
 
   const ema = useRef<Pt | null>(null)
   const paused = useRef(false)
   const flipXRef = useRef(false)
+  const flipYRef = useRef(false)
+  const lastUpdateTime = useRef(0)
+  const demoMouseRef = useRef<Pt | null>(null)
 
   const chainRef = useRef<TransformChain>({
     viewport: { W: window.innerWidth, H: window.innerHeight }
@@ -64,7 +68,47 @@ export function useGazeTracker() {
     }
   }, [])
 
+  // Demo mode: simulate gaze with mouse movement - SLOW AND SMOOTH
   useEffect(() => {
+    if (!state.demoMode) return
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (paused.current) return
+      
+      const now = Date.now()
+      // Match the slower update rate for demo mode too
+      if (now - lastUpdateTime.current < 40) return
+      lastUpdateTime.current = now
+      
+      // Smooth mouse tracking with EMA
+      if (!demoMouseRef.current) {
+        demoMouseRef.current = { x: e.clientX, y: e.clientY }
+      } else {
+        const alpha = 0.15  // Slow and smooth
+        demoMouseRef.current.x = alpha * e.clientX + (1 - alpha) * demoMouseRef.current.x
+        demoMouseRef.current.y = alpha * e.clientY + (1 - alpha) * demoMouseRef.current.y
+      }
+      
+      setState(s => ({
+        ...s,
+        currentGaze: {
+          x: demoMouseRef.current!.x,
+          y: demoMouseRef.current!.y,
+          timestamp: now,
+          confidence: 0.95,
+          trackingQuality: 'excellent',
+          velocity: 0
+        }
+      }))
+    }
+    
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [state.demoMode])
+
+  useEffect(() => {
+    if (state.demoMode) return // Skip WebGazer in demo mode
+    
     const start = () => {
       const wg = window.webgazer
       if (!wg) {
@@ -77,21 +121,46 @@ export function useGazeTracker() {
         .showVideoPreview(true)
         .showFaceOverlay(true)
         .showFaceFeedbackBox(true)
-        .applyKalmanFilter(false)
+        .applyKalmanFilter(true)  // Enable Kalman filter for smoother prediction
         .setGazeListener((data: any, ts: number) => {
           if (paused.current || !data) return
+          
+          // Slow throttling for much smoother tracking - 40ms (~25fps for ultra-smooth flow)
+          const now = Date.now()
+          if (now - lastUpdateTime.current < 40) return
+          lastUpdateTime.current = now
+          
           let gx = data.x, gy = data.y
           if (flipXRef.current) gx = window.innerWidth - gx
+          if (flipYRef.current) gy = window.innerHeight - gy
 
           const p = applyChainPixel({ x: gx, y: gy }, chainRef.current)
 
-          // EMA smoothing
-          const alpha = 0.35
+          // Adaptive smoothing based on movement speed for natural flow
+          const velocity = ema.current ? Math.hypot(p.x - ema.current.x, p.y - ema.current.y) : 0
+          
+          // MUCH SMOOTHER tracking with lower alpha for flowy, accurate movement
+          // Lower alpha = more smoothing = slower but very smooth
+          const baseAlpha = 0.12  // Much slower and smoother
+          const alpha = velocity > 3 ? baseAlpha : baseAlpha * 0.8  // Even slower when moving slow
+          
+          // Calculate tracking quality based on confidence and stability
+          const conf = data?.confidence ?? 1
+          const getTrackingQuality = (): 'excellent' | 'good' | 'fair' | 'poor' => {
+            if (conf > 0.8 && velocity < 15) return 'excellent'
+            if (conf > 0.6 && velocity < 25) return 'good'
+            if (conf > 0.4) return 'fair'
+            return 'poor'
+          }
+          
           if (!ema.current) ema.current = { x: p.x, y: p.y }
           else {
             ema.current.x = alpha * p.x + (1 - alpha) * ema.current.x
             ema.current.y = alpha * p.y + (1 - alpha) * ema.current.y
           }
+
+          // NO BOUNDARIES - let the dot roam free across the entire screen
+          // Removed all constraints for full screen access
 
           setState(s => ({
             ...s,
@@ -99,7 +168,9 @@ export function useGazeTracker() {
               x: ema.current!.x,
               y: ema.current!.y,
               timestamp: ts,
-              confidence: data?.confidence ?? 1
+              confidence: conf,
+              trackingQuality: getTrackingQuality(),
+              velocity: velocity
             }
           }))
         })
@@ -129,7 +200,7 @@ export function useGazeTracker() {
         window.webgazer?.clearGazeListener?.()
       } catch {}
     }
-  }, [])
+  }, [state.demoMode])
 
   // API exposed to components
   return {
@@ -137,6 +208,7 @@ export function useGazeTracker() {
     isCalibrated: state.isCalibrated,
     currentGaze: state.currentGaze,
     error: state.error,
+    demoMode: state.demoMode,
 
     completeCalibration: () => {
       setState(s => ({ ...s, isCalibrated: true }))
@@ -147,6 +219,18 @@ export function useGazeTracker() {
       chainRef.current = { viewport: { W: window.innerWidth, H: window.innerHeight } }
       setState(s => ({ ...s, isCalibrated: false }))
       localStorage.removeItem('clientsight_calibration_v2')
+    },
+    
+    toggleDemoMode: () => {
+      setState(s => ({ 
+        ...s, 
+        demoMode: !s.demoMode,
+        isCalibrated: !s.demoMode // Auto-calibrate in demo mode
+      }))
+      if (!state.demoMode) {
+        // Switching TO demo mode - skip WebGazer initialization
+        setState(s => ({ ...s, isInitialized: true, isCalibrated: true }))
+      }
     },
 
     setAffine: (A: [[number,number],[number,number]], b: [number,number]) => {
@@ -167,6 +251,7 @@ export function useGazeTracker() {
     },
 
     setFlipX: (v: boolean) => { flipXRef.current = v },
+    setFlipY: (v: boolean) => { flipYRef.current = v },
     pauseTracking: () => { paused.current = true },
     resumeTracking: () => { paused.current = false },
 

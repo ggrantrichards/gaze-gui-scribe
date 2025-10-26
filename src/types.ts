@@ -4,6 +4,8 @@ export interface GazePoint {
   y: number
   timestamp: number
   confidence?: number
+  trackingQuality?: 'excellent' | 'good' | 'fair' | 'poor'
+  velocity?: number
 }
 
 export interface ElementLock {
