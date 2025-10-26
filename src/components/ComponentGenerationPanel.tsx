@@ -8,6 +8,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { useAIComponentGeneration } from '@/hooks/useAIComponentGeneration'
+import { ModelSelector } from './ModelSelector'
 import type { ComponentNode, GazePoint, GazeOptimizationResponse } from '@/types'
 
 interface ComponentGenerationPanelProps {
@@ -24,6 +25,7 @@ export function ComponentGenerationPanel({
   recentGazeData
 }: ComponentGenerationPanelProps) {
   const [prompt, setPrompt] = useState('')
+  const [selectedModel, setSelectedModel] = useState('claude-3.5-sonnet')
   const [optimizations, setOptimizations] = useState<GazeOptimizationResponse | null>(null)
 
   const {
@@ -96,6 +98,17 @@ export function ComponentGenerationPanel({
 
       {/* Content */}
       <div className="p-4 space-y-4">
+        {/* Model Selector */}
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-2">
+            AI Model
+          </label>
+          <ModelSelector
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+          />
+        </div>
+
         {/* Text Prompt Input */}
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-2">
@@ -104,8 +117,8 @@ export function ComponentGenerationPanel({
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g., Create a modern login form with email and password..."
-            className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            placeholder="Try: 'A modern SaaS landing page' or 'Login form with social buttons'"
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
             rows={3}
             disabled={isGenerating}
           />

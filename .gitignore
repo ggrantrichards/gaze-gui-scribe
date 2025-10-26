@@ -30,3 +30,7 @@ dist-ssr
 # Terminal output files
 tatus
 status
+
+# Firebase
+.firebase
+firebase-debug.log

@@ -39,10 +39,10 @@ class ComponentGenerationResponse(Model):
 # Initialize OpenAI client (optional - will use mocks if not available)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if openai_api_key:
-    print("✅ OpenAI API key found and loaded")
+    print("[OK] OpenAI API key found and loaded")
     openai_client = AsyncOpenAI(api_key=openai_api_key)
 else:
-    print("⚠️  No OpenAI API key found - will use mock generation")
+    print("[WARN] No OpenAI API key found - will use mock generation")
     openai_client = None
 
 # Create Component Generator Agent
@@ -56,7 +56,7 @@ component_generator = Agent(
 @component_generator.on_event("startup")
 async def introduce(ctx: Context):
     """Announce agent on startup"""
-    ctx.logger.info(f"🤖 Component Generator Agent started")
+    ctx.logger.info(f"[AI] Component Generator Agent started")
     ctx.logger.info(f"📍 Address: {component_generator.address}")
     ctx.logger.info(f"🔌 Endpoint: http://localhost:8001")
 
@@ -67,12 +67,12 @@ async def handle_generation_request(ctx: Context, sender: str, msg: ComponentGen
     
     This is the CORE AGENT LOGIC that judges will evaluate!
     """
-    ctx.logger.info(f"📨 Received request from {sender}: {msg.prompt}")
+    ctx.logger.info(f"[RECEIVED] Received request from {sender}: {msg.prompt}")
     
     try:
         # Check if OpenAI is available
         if openai_client is None:
-            ctx.logger.info("⚠️  No OpenAI API key - using mock generation")
+            ctx.logger.info("[WARN]  No OpenAI API key - using mock generation")
             code = generate_mock_component(msg.prompt)
             dependencies = extract_dependencies(code)
             component_type = detect_component_type(code)
@@ -114,10 +114,10 @@ async def handle_generation_request(ctx: Context, sender: str, msg: ComponentGen
             gaze_optimizations=build_gaze_optimizations(msg.gaze_context) if msg.gaze_context else None
         )
         
-        ctx.logger.info(f"✅ Generated {component_type} successfully")
+        ctx.logger.info(f"[OK] Generated {component_type} successfully")
         
     except Exception as e:
-        ctx.logger.error(f"❌ Generation failed: {str(e)}")
+        ctx.logger.error(f"[ERROR] Generation failed: {str(e)}")
         response_msg = ComponentGenerationResponse(
             request_id=msg.request_id,
             code="",
@@ -168,9 +168,9 @@ export function HeroSection() {
 }
 
 BAD EXAMPLE (DO NOT DO THIS):
-import Image from 'next/image'  ❌ NO IMPORTS
-import { useState } from 'react'  ❌ NO IMPORTS
-<Image src="..." />  ❌ Use <img> instead
+import Image from 'next/image'  [ERROR] NO IMPORTS
+import { useState } from 'react'  [ERROR] NO IMPORTS
+<Image src="..." />  [ERROR] Use <img> instead
 
 IMPORTANT: Return ONLY the component code, no explanations or markdown."""
 
@@ -182,7 +182,7 @@ IMPORTANT: Return ONLY the component code, no explanations or markdown."""
     if request.gaze_context:
         base_prompt += f"""
 
-🎯 USER ATTENTION INSIGHTS (from eye-tracking):
+[TARGET] USER ATTENTION INSIGHTS (from eye-tracking):
 - Primary attention areas: {', '.join(request.gaze_context.get('topAttentionAreas', []))}
 - Average dwell time: {request.gaze_context.get('avgDwellTime', 0)}ms
 - Total fixations: {request.gaze_context.get('totalFixations', 0)}
