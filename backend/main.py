@@ -47,7 +47,13 @@ app = FastAPI(
 # Configure CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Vite default ports
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://localhost:3000",
+        "https://clientsight-5a400.web.app",  # Firebase hosting
+        "https://clientsight-5a400.firebaseapp.com",  # Firebase hosting alt
+        "https://gazebuilder.tech",  # Custom domain if you have one
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
