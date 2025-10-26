@@ -76,15 +76,16 @@ export function useGazeTracker() {
       if (paused.current) return
       
       const now = Date.now()
-      // Match the slower update rate for demo mode too
-      if (now - lastUpdateTime.current < 40) return
+      // Match the stable update rate for demo mode too
+      if (now - lastUpdateTime.current < 25) return
       lastUpdateTime.current = now
       
-      // Smooth mouse tracking with EMA
+      // Smooth mouse tracking with EMA - matching main tracker settings
       if (!demoMouseRef.current) {
         demoMouseRef.current = { x: e.clientX, y: e.clientY }
       } else {
-        const alpha = 0.15  // Slow and smooth
+        const velocity = Math.hypot(e.clientX - demoMouseRef.current.x, e.clientY - demoMouseRef.current.y)
+        const alpha = 0.28  // Match main tracker - balanced smoothness
         demoMouseRef.current.x = alpha * e.clientX + (1 - alpha) * demoMouseRef.current.x
         demoMouseRef.current.y = alpha * e.clientY + (1 - alpha) * demoMouseRef.current.y
       }
@@ -125,9 +126,9 @@ export function useGazeTracker() {
         .setGazeListener((data: any, ts: number) => {
           if (paused.current || !data) return
           
-          // Slow throttling for much smoother tracking - 40ms (~25fps for ultra-smooth flow)
+          // Stable throttling for smooth tracking - 25ms (~40fps for balanced smoothness)
           const now = Date.now()
-          if (now - lastUpdateTime.current < 40) return
+          if (now - lastUpdateTime.current < 25) return
           lastUpdateTime.current = now
           
           let gx = data.x, gy = data.y
@@ -139,16 +140,16 @@ export function useGazeTracker() {
           // Adaptive smoothing based on movement speed for natural flow
           const velocity = ema.current ? Math.hypot(p.x - ema.current.x, p.y - ema.current.y) : 0
           
-          // MUCH SMOOTHER tracking with lower alpha for flowy, accurate movement
-          // Lower alpha = more smoothing = slower but very smooth
-          const baseAlpha = 0.12  // Much slower and smoother
-          const alpha = velocity > 3 ? baseAlpha : baseAlpha * 0.8  // Even slower when moving slow
+          // STABLE and ACCURATE tracking - balance between smooth and responsive
+          // Higher alpha = more responsive = less lag and flailing
+          const baseAlpha = 0.28  // Balanced - smooth but responsive
+          const alpha = velocity > 5 ? Math.min(0.4, baseAlpha * 1.3) : baseAlpha
           
           // Calculate tracking quality based on confidence and stability
           const conf = data?.confidence ?? 1
           const getTrackingQuality = (): 'excellent' | 'good' | 'fair' | 'poor' => {
-            if (conf > 0.8 && velocity < 15) return 'excellent'
-            if (conf > 0.6 && velocity < 25) return 'good'
+            if (conf > 0.8 && velocity < 20) return 'excellent'
+            if (conf > 0.6 && velocity < 35) return 'good'
             if (conf > 0.4) return 'fair'
             return 'poor'
           }

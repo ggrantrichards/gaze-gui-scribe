@@ -119,14 +119,19 @@ export function PageBuilderCanvas({
       className="w-full h-full bg-gray-50 overflow-auto relative"
     >
       {/* Gaze Cursor Overlay - BIGGER and SMOOTHER just like main page */}
-      {currentGaze && (
-        <>
+      {currentGaze && (() => {
+        // Constrain gaze to canvas area (keep out of sidebar chat)
+        // The sidebar is w-96 = 384px on the right
+        const constrainedX = Math.min(currentGaze.x, window.innerWidth - 400)
+        const constrainedY = currentGaze.y
+        
+        return <>
           {/* Outer pulse ring - BIGGER */}
           <div
             className="fixed rounded-full pointer-events-none z-50"
             style={{
-              left: currentGaze.x,
-              top: currentGaze.y,
+              left: constrainedX,
+              top: constrainedY,
               width: 50,
               height: 50,
               border: `3px solid ${currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444'}`,
@@ -139,8 +144,8 @@ export function PageBuilderCanvas({
           <div
             className="fixed rounded-full pointer-events-none z-50"
             style={{
-              left: currentGaze.x,
-              top: currentGaze.y,
+              left: constrainedX,
+              top: constrainedY,
               width: 32,
               height: 32,
               border: `4px solid ${currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444'}`,
@@ -155,8 +160,8 @@ export function PageBuilderCanvas({
           <div
             className="fixed rounded-full pointer-events-none z-50"
             style={{
-              left: currentGaze.x,
-              top: currentGaze.y,
+              left: constrainedX,
+              top: constrainedY,
               width: 12,
               height: 12,
               background: currentGaze.trackingQuality === 'excellent' ? '#10b981' : currentGaze.trackingQuality === 'good' ? '#3b82f6' : currentGaze.trackingQuality === 'fair' ? '#f59e0b' : '#ef4444',
@@ -166,7 +171,8 @@ export function PageBuilderCanvas({
             }}
           />
         </>
-      )}
+      }
+      )()}
 
       {/* Page Sections */}
       <div className="max-w-7xl mx-auto">
