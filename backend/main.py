@@ -223,17 +223,13 @@ async def generate_multi_section_stream(request: ComponentRequest):
             # Send initial status with section names
             yield f"data: {json.dumps({'type': 'init', 'total_sections': len(section_prompts), 'section_names': [s['name'] for s in section_prompts], 'page_type': page_type})}\n\n"
             
-            # Generate each section and stream updates
-            print(f"[INFO] Starting generation of {len(section_prompts)} sections")
-            for idx, section_info in enumerate(section_prompts, 1):
+            # Helper function to generate a single section
+            async def generate_single_section(section_info: Dict, idx: int) -> Dict:
+                """Generate a single section and return result"""
                 section_name = section_info['name']
                 section_prompt = section_info['prompt']
                 
                 print(f"[INFO] Processing section {idx}/{len(section_prompts)}: {section_name}")
-                
-                # Send "generating" status
-                yield f"data: {json.dumps({'type': 'status', 'section': section_name, 'status': 'generating'})}\n\n"
-                
                 print(f"[PROCESSING] Generating {section_name}...")
                 
                 # Choose system prompt
@@ -245,7 +241,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
                 # Try to generate with retry logic
                 code = None
                 attempt = 0
-                max_attempts = 3
+                max_attempts = 2  # Reduced from 3 for speed
                 
                 while attempt < max_attempts and not code:
                     attempt += 1
@@ -257,7 +253,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
                             system_prompt=system_prompt,
                             model="auto",
                             temperature=0.7 + (attempt * 0.1),
-                            max_tokens=3000  # Increased for complex sections
+                            max_tokens=2500  # Slightly reduced for speed
                         )
                         
                         print(f"[DEBUG] OpenRouter returned code ({len(temp_code)} chars)")
@@ -267,14 +263,10 @@ async def generate_multi_section_stream(request: ComponentRequest):
                             print(f"[OK] Generated {section_name} - Attempt {attempt} ({len(temp_code)} chars)")
                         else:
                             print(f"[WARN] Invalid code (Attempt {attempt}): {error_msg}")
-                            print(f"   Code length: {len(temp_code)} chars")
-                            print(f"   First 200 chars: {temp_code[:200]}")
                     except Exception as e:
                         print(f"[ERROR] OpenRouter generation failed (Attempt {attempt}): {str(e)}")
-                        import traceback
-                        traceback.print_exc()
                     
-                    # Fallback to OpenAI if needed
+                    # Fallback to OpenAI if needed (only on last attempt)
                     if not code and openai_client and attempt == max_attempts:
                         try:
                             response = await openai_client.chat.completions.create(
@@ -284,7 +276,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
                                     {"role": "user", "content": section_prompt}
                                 ],
                                 temperature=0.7,
-                                max_tokens=3000  # Increased for complex sections
+                                max_tokens=2500
                             )
                             temp_code = response.choices[0].message.content
                             
@@ -313,8 +305,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
   )
 }}"""
                 
-                # Send "completed" status with section data
-                section_result = {
+                return {
                     'type': 'section_complete',
                     'section': section_name,
                     'status': 'completed',
@@ -325,19 +316,44 @@ async def generate_multi_section_stream(request: ComponentRequest):
                         'dependencies': [],
                         'sectionOrder': section_info.get('order', idx - 1),
                         'requestId': request_id
-                    }
+                    },
+                    'idx': idx
                 }
-                
-                # Ensure the data is properly serialized
+            
+            # Send "generating" status for all sections immediately
+            print(f"[INFO] Starting PARALLEL generation of {len(section_prompts)} sections")
+            for idx, section_info in enumerate(section_prompts, 1):
+                section_name = section_info['name']
+                yield f"data: {json.dumps({'type': 'status', 'section': section_name, 'status': 'generating'})}\n\n"
+            
+            # Generate all sections in parallel using asyncio tasks
+            tasks = [
+                asyncio.create_task(generate_single_section(section_info, idx)) 
+                for idx, section_info in enumerate(section_prompts, 1)
+            ]
+            
+            # Process results as they complete (not necessarily in order)
+            # This allows faster sections to be sent to the client immediately
+            completed_count = 0
+            for coro in asyncio.as_completed(tasks):
                 try:
-                    section_json = json.dumps(section_result)
-                    yield f"data: {section_json}\n\n"
-                    print(f"[OK] Section {section_name} complete ({idx}/{len(section_prompts)}), sent to client")
-                    print(f"[DEBUG] Section {section_name} code length: {len(code)} chars")
-                except Exception as json_error:
-                    print(f"[ERROR] Failed to serialize section {section_name}: {json_error}")
-                    # Send error for this section but continue
-                    yield f"data: {json.dumps({'type': 'error', 'section': section_name, 'message': f'Failed to serialize section data'})}\n\n"
+                    section_result = await coro
+                    completed_count += 1
+                    
+                    # Ensure the data is properly serialized
+                    try:
+                        section_json = json.dumps(section_result)
+                        yield f"data: {section_json}\n\n"
+                        print(f"[OK] Section {section_result['section']} complete ({completed_count}/{len(section_prompts)}), sent to client")
+                        print(f"[DEBUG] Section {section_result['section']} code length: {len(section_result['data']['code'])} chars")
+                    except Exception as json_error:
+                        print(f"[ERROR] Failed to serialize section {section_result.get('section', 'unknown')}: {json_error}")
+                        yield f"data: {json.dumps({'type': 'error', 'section': section_result.get('section', 'unknown'), 'message': 'Failed to serialize section data'})}\n\n"
+                except Exception as e:
+                    print(f"[ERROR] Section generation failed: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    yield f"data: {json.dumps({'type': 'error', 'section': 'unknown', 'message': str(e)})}\n\n"
             
             # Send final completion message
             yield f"data: {json.dumps({'type': 'complete', 'message': 'All sections generated'})}\n\n"
