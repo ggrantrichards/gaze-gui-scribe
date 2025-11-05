@@ -107,19 +107,48 @@ class ApplyEditRequest(BaseModel):
 # Agent addresses (will be populated on startup)
 AGENT_ADDRESSES = {}
 
+# Create Bureau to manage agents
+bureau = Bureau()
+bureau.add(component_generator)
+bureau.add(gaze_optimizer)
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize Fetch.ai agents on startup"""
     print("[STARTING] Starting ClientSight Agent API...")
     print("📡 Connecting to Fetch.ai agents...")
     
-    # Store agent addresses
-    AGENT_ADDRESSES['component_generator'] = component_generator.address
-    AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
-    
-    print(f"[OK] Component Generator: {component_generator.address}")
-    print(f"[OK] Gaze Optimizer: {gaze_optimizer.address}")
-    print("[SUCCESS] All agents ready!")
+    # Start Bureau in background (this starts the agents)
+    try:
+        # Run Bureau in a background thread (it's a blocking call)
+        import threading
+        def run_bureau():
+            try:
+                bureau.run()
+            except Exception as e:
+                print(f"[WARN] Bureau runtime error: {e}")
+        
+        bureau_thread = threading.Thread(target=run_bureau, daemon=True)
+        bureau_thread.start()
+        
+        # Give agents a moment to start and register
+        await asyncio.sleep(3)
+        
+        # Store agent addresses
+        AGENT_ADDRESSES['component_generator'] = component_generator.address
+        AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
+        
+        print(f"[OK] Component Generator: {component_generator.address}")
+        print(f"[OK] Gaze Optimizer: {gaze_optimizer.address}")
+        print("[SUCCESS] All agents ready!")
+        print("💡 Note: Agents communicate via Bureau internally")
+    except Exception as e:
+        print(f"[WARN] Agent startup issue (will continue): {e}")
+        import traceback
+        traceback.print_exc()
+        # Store addresses anyway (they might still work)
+        AGENT_ADDRESSES['component_generator'] = component_generator.address
+        AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
 
 @app.get("/")
 async def root():
@@ -158,11 +187,16 @@ async def generate_multi_section_stream(request: ComponentRequest):
     Generate multiple sections with real-time streaming updates
     Sends updates as each section completes
     """
+    print(f"[ENDPOINT] /api/generate-multi-section-stream called")
+    print(f"[ENDPOINT] Request prompt: {request.prompt[:100]}...")
+    
     async def generate_sections_stream():
         try:
             request_id = str(uuid.uuid4())
             
             print(f"[RECEIVED] Received multi-section streaming request: {request.prompt}")
+            print(f"[DEBUG] Request ID: {request_id}")
+            print(f"[DEBUG] Output format: {request.outputFormat}")
             
             # Import utilities
             from utils.section_splitter import split_into_sections
@@ -171,6 +205,10 @@ async def generate_multi_section_stream(request: ComponentRequest):
             from prompts.landing_page_prompts import get_landing_page_system_prompt, get_component_system_prompt
             from prompts.typescript_prompts import get_typescript_landing_page_prompt, get_typescript_component_prompt
             from utils.code_validator import validate_component_code, clean_and_validate_code
+            
+            # Check OpenRouter availability
+            print(f"[DEBUG] OpenRouter available: {openrouter_client.available}")
+            print(f"[DEBUG] OpenAI client available: {openai_client is not None}")
             
             # Analyze prompt
             analysis = split_into_sections(request.prompt)
@@ -210,6 +248,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
                     attempt += 1
                     
                     try:
+                        print(f"[DEBUG] Attempting OpenRouter generation for {section_name} (Attempt {attempt})...")
                         temp_code = await openrouter_client.generate(
                             prompt=section_prompt,
                             system_prompt=system_prompt,
@@ -218,6 +257,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
                             max_tokens=3000  # Increased for complex sections
                         )
                         
+                        print(f"[DEBUG] OpenRouter returned code ({len(temp_code)} chars)")
                         is_valid, error_msg = validate_component_code(temp_code, section_name)
                         if is_valid:
                             code = temp_code
@@ -227,7 +267,9 @@ async def generate_multi_section_stream(request: ComponentRequest):
                             print(f"   Code length: {len(temp_code)} chars")
                             print(f"   First 200 chars: {temp_code[:200]}")
                     except Exception as e:
-                        print(f"[WARN] Generation failed (Attempt {attempt}): {e}")
+                        print(f"[ERROR] OpenRouter generation failed (Attempt {attempt}): {str(e)}")
+                        import traceback
+                        traceback.print_exc()
                     
                     # Fallback to OpenAI if needed
                     if not code and openai_client and attempt == max_attempts:
@@ -300,6 +342,10 @@ async def generate_multi_section_stream(request: ComponentRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
 
