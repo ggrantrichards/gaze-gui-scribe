@@ -142,21 +142,42 @@ export function FullPageBuilder({
         // Call streaming multi-section API
         const backendURL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
         
+        // Debug logging
+        console.log('🔍 Backend URL:', backendURL)
+        console.log('🔍 VITE_BACKEND_URL env var:', import.meta.env.VITE_BACKEND_URL)
+        console.log('🔍 Full request URL:', `${backendURL}/api/generate-multi-section-stream`)
+        console.log('🔍 Request payload:', { prompt, outputFormat: 'react' })
+        
         setGenerationProgress('Connecting to AI...')
         
-        const response = await fetch(`${backendURL}/api/generate-multi-section-stream`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, outputFormat: 'react' })
-        })
+        console.log('🌐 Making fetch request to:', `${backendURL}/api/generate-multi-section-stream`)
+        
+        let response: Response
+        try {
+          response = await fetch(`${backendURL}/api/generate-multi-section-stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, outputFormat: 'react' })
+          })
+          console.log('📡 Response received:', response.status, response.statusText)
+          console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()))
+        } catch (fetchError) {
+          console.error('❌ Fetch failed:', fetchError)
+          throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect to backend'}`)
+        }
         
         if (!response.ok) {
-          throw new Error(`API error: ${response.statusText}`)
+          const errorText = await response.text().catch(() => 'No error details')
+          console.error('❌ API error:', response.status, response.statusText, errorText)
+          throw new Error(`API error (${response.status}): ${response.statusText}. ${errorText}`)
         }
         
         if (!response.body) {
-          throw new Error('No response body')
+          console.error('❌ No response body')
+          throw new Error('No response body - server may not support streaming')
         }
+        
+        console.log('✅ Response body available, starting stream read')
         
         setGenerationProgress('Receiving sections...')
         
@@ -165,28 +186,39 @@ export function FullPageBuilder({
         const decoder = new TextDecoder()
         let buffer = ''
         let sectionIndex = 0
+        let hasReceivedData = false
+        
+        console.log('📖 Starting to read stream...')
         
         while (true) {
-          const { done, value } = await reader.read()
-          
-          if (done) {
-            console.log('✅ Stream complete')
-            break
-          }
-          
-          // Decode chunk and add to buffer
-          buffer += decoder.decode(value, { stream: true })
-          
-          // Process complete messages (separated by \n\n)
-          const messages = buffer.split('\n\n')
-          buffer = messages.pop() || '' // Keep incomplete message in buffer
-          
-          for (const message of messages) {
-            if (!message.trim() || !message.startsWith('data: ')) continue
+          try {
+            const { done, value } = await reader.read()
             
-            try {
-              const data = JSON.parse(message.slice(6)) // Remove 'data: ' prefix
-              console.log('📨 Received event:', data.type, data)
+            if (done) {
+              console.log('✅ Stream complete', hasReceivedData ? '(received data)' : '(no data received)')
+              if (!hasReceivedData) {
+                throw new Error('Stream closed without receiving any data. Backend may not be processing the request.')
+              }
+              break
+            }
+            
+            if (value && value.length > 0) {
+              hasReceivedData = true
+              console.log('📦 Received chunk:', value.length, 'bytes')
+              
+              // Decode chunk and add to buffer
+              buffer += decoder.decode(value, { stream: true })
+              
+              // Process complete messages (separated by \n\n)
+              const messages = buffer.split('\n\n')
+              buffer = messages.pop() || '' // Keep incomplete message in buffer
+              
+              for (const message of messages) {
+                if (!message.trim() || !message.startsWith('data: ')) continue
+                
+                try {
+                  const data = JSON.parse(message.slice(6)) // Remove 'data: ' prefix
+                  console.log('📨 Received event:', data.type, data)
               
               if (data.type === 'init') {
                 // Initialize section statuses with actual section names
@@ -216,19 +248,55 @@ export function FullPageBuilder({
                 const sectionName = data.section
                 
                 console.log(`✅ Section ${sectionName} completed, adding to page`)
+                console.log(`📦 Section data:`, {
+                  name: sectionName,
+                  codeLength: sectionData.code?.length || 0,
+                  order: sectionData.sectionOrder,
+                  hasCode: !!sectionData.code
+                })
+                
+                // Validate section data
+                if (!sectionData.code || sectionData.code.trim().length === 0) {
+                  console.error(`❌ Section ${sectionName} has no code!`)
+                  setSectionStatuses(prev => prev.map(s => 
+                    s.name === sectionName 
+                      ? { ...s, status: 'error' as const, timestamp: Date.now() } 
+                      : s
+                  ))
+                  return // Skip this section
+                }
+                
+                // Use unique ID based on section name and order to prevent duplicates
+                const sectionOrder = sectionData.sectionOrder !== undefined ? sectionData.sectionOrder : sectionIndex
+                const uniqueId = `section-${sectionName.toLowerCase()}-${sectionOrder}-${Date.now()}`
                 
                 const newSection: PageSection = {
-                  id: `section-${Date.now()}-${sectionIndex}`,
+                  id: uniqueId,
                   component: {
-                    id: `component-${Date.now()}-${sectionIndex}`,
-                    name: sectionData.sectionName || `Section ${sectionIndex + 1}`,
+                    id: `component-${sectionName.toLowerCase()}-${sectionOrder}`,
+                    name: sectionData.sectionName || sectionName,
                     code: sectionData.code,
                     dependencies: sectionData.dependencies || []
                   },
-                  order: sectionData.sectionOrder !== undefined ? sectionData.sectionOrder : sectionIndex
+                  order: sectionOrder
                 }
                 
-                setSections(prev => [...prev, newSection])
+                // Add section, avoiding duplicates by checking if section with same order already exists
+                setSections(prev => {
+                  // Check if section with this order already exists
+                  const existingIndex = prev.findIndex(s => s.order === sectionOrder)
+                  if (existingIndex >= 0) {
+                    // Replace existing section at this order
+                    const updated = [...prev]
+                    updated[existingIndex] = newSection
+                    console.log(`🔄 Replaced section at order ${sectionOrder}`)
+                    return updated
+                  } else {
+                    // Add new section
+                    console.log(`➕ Added new section: ${sectionName} at order ${sectionOrder}`)
+                    return [...prev, newSection].sort((a, b) => a.order - b.order)
+                  }
+                })
                 
                 // Update status to completed
                 setSectionStatuses(prev => prev.map(s => 
@@ -239,31 +307,56 @@ export function FullPageBuilder({
                 
                 sectionIndex++
                 setCurrentSectionIndex(sectionIndex)
-                setGenerationProgress(`✅ ${sectionName} completed!`)
+                setGenerationProgress(`✅ ${sectionName} completed! (${sectionIndex}/${totalSections})`)
+                console.log(`📊 Progress: ${sectionIndex}/${totalSections} sections completed`)
                 
               } else if (data.type === 'complete') {
                 // All sections generated
-                setGenerationProgress('✅ All sections generated!')
-                console.log('🎉 All sections complete')
+                console.log('🎉 All sections complete message received')
+                console.log(`📊 Final count: ${sectionIndex} sections processed`)
                 
-                // Mark any remaining as completed
-                setSectionStatuses(prev => prev.map(s => ({ ...s, status: 'completed' as const })))
+                // Check if we're missing any sections by checking state
+                setSectionStatuses(prev => {
+                  const missingSections = prev.filter(s => s.status !== 'completed' && s.status !== 'error')
+                  if (missingSections.length > 0) {
+                    console.warn(`⚠️ ${missingSections.length} sections still pending:`, missingSections.map(s => s.name))
+                  }
+                  // Mark any remaining as completed (they might have been generated but not processed)
+                  return prev.map(s => ({ ...s, status: 'completed' as const }))
+                })
+                
+                // Get final section count from state
+                setSections(prev => {
+                  console.log(`📊 Final sections in state: ${prev.length}`)
+                  setGenerationProgress(`✅ All sections generated! (${prev.length} total)`)
+                  return prev
+                })
                 
                 setTimeout(() => {
                   setGenerationProgress('')
                   setIsGenerating(false)
-                }, 2000)
+                }, 3000) // Longer delay to show completion
                 
               } else if (data.type === 'error') {
                 throw new Error(data.message || 'Generation error')
               }
-            } catch (parseError) {
-              console.error('❌ Error parsing event:', parseError, message)
+                } catch (parseError) {
+                  console.error('❌ Error parsing event:', parseError, message)
+                }
+              }
             }
+          } catch (readError) {
+            console.error('❌ Error reading stream:', readError)
+            throw readError
           }
         }
       } catch (error) {
         console.error('❌ Multi-section generation failed:', error)
+        console.error('❌ Error details:', {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          name: error instanceof Error ? error.name : typeof error
+        })
         setGenerationProgress(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
         // Mark current section as error
         setSectionStatuses(prev => prev.map((s, i) => 
@@ -273,7 +366,9 @@ export function FullPageBuilder({
           setGenerationProgress('')
           setIsGenerating(false)
           setSectionStatuses([])
-        }, 3000)
+        }, 5000) // Longer timeout so user can see the error
+      } finally {
+        console.log('🏁 handleGenerate finally block - generation process ended')
       }
     } else {
       // Single component generation (existing logic)

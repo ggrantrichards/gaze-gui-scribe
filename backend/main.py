@@ -224,9 +224,12 @@ async def generate_multi_section_stream(request: ComponentRequest):
             yield f"data: {json.dumps({'type': 'init', 'total_sections': len(section_prompts), 'section_names': [s['name'] for s in section_prompts], 'page_type': page_type})}\n\n"
             
             # Generate each section and stream updates
-            for section_info in section_prompts:
+            print(f"[INFO] Starting generation of {len(section_prompts)} sections")
+            for idx, section_info in enumerate(section_prompts, 1):
                 section_name = section_info['name']
                 section_prompt = section_info['prompt']
+                
+                print(f"[INFO] Processing section {idx}/{len(section_prompts)}: {section_name}")
                 
                 # Send "generating" status
                 yield f"data: {json.dumps({'type': 'status', 'section': section_name, 'status': 'generating'})}\n\n"
@@ -320,13 +323,21 @@ async def generate_multi_section_stream(request: ComponentRequest):
                         'sectionName': section_name,
                         'componentType': section_info.get('type', 'section'),
                         'dependencies': [],
-                        'sectionOrder': section_info['order'],
+                        'sectionOrder': section_info.get('order', idx - 1),
                         'requestId': request_id
                     }
                 }
                 
-                yield f"data: {json.dumps(section_result)}\n\n"
-                print(f"[OK] Section {section_name} complete, sent to client")
+                # Ensure the data is properly serialized
+                try:
+                    section_json = json.dumps(section_result)
+                    yield f"data: {section_json}\n\n"
+                    print(f"[OK] Section {section_name} complete ({idx}/{len(section_prompts)}), sent to client")
+                    print(f"[DEBUG] Section {section_name} code length: {len(code)} chars")
+                except Exception as json_error:
+                    print(f"[ERROR] Failed to serialize section {section_name}: {json_error}")
+                    # Send error for this section but continue
+                    yield f"data: {json.dumps({'type': 'error', 'section': section_name, 'message': f'Failed to serialize section data'})}\n\n"
             
             # Send final completion message
             yield f"data: {json.dumps({'type': 'complete', 'message': 'All sections generated'})}\n\n"
@@ -334,6 +345,8 @@ async def generate_multi_section_stream(request: ComponentRequest):
             
         except Exception as e:
             print(f"[ERROR] Error in streaming generation: {str(e)}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     return StreamingResponse(
