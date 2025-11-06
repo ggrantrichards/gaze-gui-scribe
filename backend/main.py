@@ -248,13 +248,45 @@ async def generate_multi_section_stream(request: ComponentRequest):
                     
                     try:
                         print(f"[DEBUG] Attempting OpenRouter generation for {section_name} (Attempt {attempt})...")
-                        temp_code = await openrouter_client.generate(
+                        raw_response = await openrouter_client.generate(
                             prompt=section_prompt,
                             system_prompt=system_prompt,
                             model="auto",
                             temperature=0.7 + (attempt * 0.1),
                             max_tokens=2500  # Slightly reduced for speed
                         )
+                        
+                        # Extract code from markdown/explanatory text
+                        import re
+                        temp_code = raw_response
+                        
+                        # Try to extract code block first
+                        code_block_match = re.search(r'```(?:tsx?|jsx?|typescript|javascript)?\n(.*?)```', raw_response, re.DOTALL)
+                        if code_block_match:
+                            temp_code = code_block_match.group(1).strip()
+                            print(f"[DEBUG] Extracted code from markdown block ({len(temp_code)} chars)")
+                        else:
+                            # If no code block, try to find the first function/export statement
+                            # Remove explanatory text before the actual code
+                            lines = raw_response.split('\n')
+                            code_start_idx = None
+                            for i, line in enumerate(lines):
+                                if re.match(r'^\s*(export\s+)?(function|const)\s+\w+', line):
+                                    code_start_idx = i
+                                    break
+                            
+                            if code_start_idx is not None:
+                                temp_code = '\n'.join(lines[code_start_idx:]).strip()
+                                print(f"[DEBUG] Extracted code starting at line {code_start_idx} ({len(temp_code)} chars)")
+                            else:
+                                # Last resort: remove lines that look like explanations
+                                code_lines = []
+                                for line in lines:
+                                    # Skip lines that are clearly explanations (not code)
+                                    if not re.match(r'^(Apologies|Here|This|Note:|Please|You|We|I|The|As|For|In|On|At|To|From|With|Without|Using|When|Where|Why|How|What|Which|That|This|These|Those)', line, re.IGNORECASE):
+                                        code_lines.append(line)
+                                temp_code = '\n'.join(code_lines).strip()
+                                print(f"[DEBUG] Cleaned explanatory text ({len(temp_code)} chars)")
                         
                         print(f"[DEBUG] OpenRouter returned code ({len(temp_code)} chars)")
                         is_valid, error_msg = validate_component_code(temp_code, section_name)
@@ -278,7 +310,37 @@ async def generate_multi_section_stream(request: ComponentRequest):
                                 temperature=0.7,
                                 max_tokens=2500
                             )
-                            temp_code = response.choices[0].message.content
+                            raw_response = response.choices[0].message.content
+                            
+                            # Extract code from markdown/explanatory text (same logic as OpenRouter)
+                            import re
+                            temp_code = raw_response
+                            
+                            # Try to extract code block first
+                            code_block_match = re.search(r'```(?:tsx?|jsx?|typescript|javascript)?\n(.*?)```', raw_response, re.DOTALL)
+                            if code_block_match:
+                                temp_code = code_block_match.group(1).strip()
+                                print(f"[DEBUG] Extracted code from markdown block ({len(temp_code)} chars)")
+                            else:
+                                # If no code block, try to find the first function/export statement
+                                lines = raw_response.split('\n')
+                                code_start_idx = None
+                                for i, line in enumerate(lines):
+                                    if re.match(r'^\s*(export\s+)?(function|const)\s+\w+', line):
+                                        code_start_idx = i
+                                        break
+                                
+                                if code_start_idx is not None:
+                                    temp_code = '\n'.join(lines[code_start_idx:]).strip()
+                                    print(f"[DEBUG] Extracted code starting at line {code_start_idx} ({len(temp_code)} chars)")
+                                else:
+                                    # Remove explanatory text
+                                    code_lines = []
+                                    for line in lines:
+                                        if not re.match(r'^(Apologies|Here|This|Note:|Please|You|We|I|The|As|For|In|On|At|To|From|With|Without|Using|When|Where|Why|How|What|Which|That|This|These|Those)', line, re.IGNORECASE):
+                                            code_lines.append(line)
+                                    temp_code = '\n'.join(code_lines).strip()
+                                    print(f"[DEBUG] Cleaned explanatory text ({len(temp_code)} chars)")
                             
                             is_valid, error_msg = validate_component_code(temp_code, section_name)
                             if is_valid:
@@ -335,25 +397,33 @@ async def generate_multi_section_stream(request: ComponentRequest):
             # Process results as they complete (not necessarily in order)
             # This allows faster sections to be sent to the client immediately
             completed_count = 0
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    section_result = await coro
-                    completed_count += 1
-                    
-                    # Ensure the data is properly serialized
+            pending = set(tasks)
+            
+            while pending:
+                # Wait for at least one task to complete
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                
+                for task in done:
                     try:
-                        section_json = json.dumps(section_result)
-                        yield f"data: {section_json}\n\n"
-                        print(f"[OK] Section {section_result['section']} complete ({completed_count}/{len(section_prompts)}), sent to client")
-                        print(f"[DEBUG] Section {section_result['section']} code length: {len(section_result['data']['code'])} chars")
-                    except Exception as json_error:
-                        print(f"[ERROR] Failed to serialize section {section_result.get('section', 'unknown')}: {json_error}")
-                        yield f"data: {json.dumps({'type': 'error', 'section': section_result.get('section', 'unknown'), 'message': 'Failed to serialize section data'})}\n\n"
-                except Exception as e:
-                    print(f"[ERROR] Section generation failed: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    yield f"data: {json.dumps({'type': 'error', 'section': 'unknown', 'message': str(e)})}\n\n"
+                        section_result = await task
+                        completed_count += 1
+                        
+                        # Ensure the data is properly serialized
+                        try:
+                            section_json = json.dumps(section_result)
+                            yield f"data: {section_json}\n\n"
+                            print(f"[OK] Section {section_result['section']} complete ({completed_count}/{len(section_prompts)}), sent to client")
+                            print(f"[DEBUG] Section {section_result['section']} code length: {len(section_result['data']['code'])} chars")
+                        except Exception as json_error:
+                            print(f"[ERROR] Failed to serialize section {section_result.get('section', 'unknown')}: {json_error}")
+                            import traceback
+                            traceback.print_exc()
+                            yield f"data: {json.dumps({'type': 'error', 'section': section_result.get('section', 'unknown'), 'message': 'Failed to serialize section data'})}\n\n"
+                    except Exception as e:
+                        print(f"[ERROR] Section generation failed: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        yield f"data: {json.dumps({'type': 'error', 'section': 'unknown', 'message': str(e)})}\n\n"
             
             # Send final completion message
             yield f"data: {json.dumps({'type': 'complete', 'message': 'All sections generated'})}\n\n"
