@@ -44,11 +44,14 @@ class GazeOptimizationResponse(Model):
     error: Optional[str] = None
 
 # Create Gaze Optimizer Agent
+# For cloud deployment: agents communicate via Bureau internally, no separate HTTP endpoints needed
+# In Railway, we only expose the FastAPI server on PORT, agents communicate via Bureau
 gaze_optimizer = Agent(
     name="gaze_optimizer",
-    port=8002,
+    port=8002,  # Internal port for Bureau communication
     seed="gaze_optimizer_seed_phrase_calhacks",
-    endpoint=["http://localhost:8002/submit"],
+    # Endpoint only needed if agent needs to be accessed externally
+    # For Railway, Bureau handles internal communication
 )
 
 @gaze_optimizer.on_event("startup")
@@ -56,7 +59,7 @@ async def introduce(ctx: Context):
     """Announce agent on startup"""
     ctx.logger.info(f"👁️  Gaze Optimizer Agent started")
     ctx.logger.info(f"📍 Address: {gaze_optimizer.address}")
-    ctx.logger.info(f"🔌 Endpoint: http://localhost:8002")
+    ctx.logger.info(f"🔌 Running via Bureau (internal communication)")
 
 @gaze_optimizer.on_message(model=GazeOptimizationRequest)
 async def handle_optimization_request(ctx: Context, sender: str, msg: GazeOptimizationRequest):

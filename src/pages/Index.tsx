@@ -1,26 +1,57 @@
-import React, { useEffect, useState, useCallback } from 'react'
-import { useGazeTracker } from '@/hooks/useGazeTracker'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useGaze } from '@/contexts/GazeContext'
+import { useGazeErrorHandling } from '@/hooks/useGazeErrorHandling'
 import { Calibration } from '@/components/Calibration'
 import { GazeOverlay } from '@/components/GazeOverlay'
+import { GazeErrorBanner } from '@/components/GazeErrorPanel'
 import { InstructionPanel } from '@/components/InstructionPanel'
 import { AutoSuggestionPanel } from '@/components/AutoSuggestionPanel'
-import { ComponentGenerationPanel } from '@/components/ComponentGenerationPanel'
-import { LiveComponentPreview } from '@/components/LiveComponentPreview'
 import { FullPageBuilderWithProjects } from '@/components/FullPageBuilderWithProjects'
 import NewPage from '@/pages/NewPage'
-import { parseInstruction } from '@/utils/nlpParser'
 import { parseInstructionSmart } from '../utils/nlpParser'
 import { applyIntent, captureStyles, revertStyles } from '@/utils/styleApplier'
-import type { ElementLock, ComponentNode, GazePoint } from '@/types'
+import type { ElementLock, GazePoint } from '@/types'
+import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout'
+import { GazeControlPanel } from '@/components/GazeControlPanel'
+import { CameraPreview } from '@/components/CameraPreview'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { 
+  Sparkles, 
+  Layout, 
+  MousePointer2, 
+  Plus, 
+  History as HistoryIcon,
+  Lightbulb,
+  Target,
+  Eye
+} from 'lucide-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export default function Index() {
+  // Use the centralized GazeContext instead of direct hook
   const {
-    isInitialized, isCalibrated, currentGaze, error,
-    completeCalibration, resetCalibration, pauseTracking, resumeTracking, getElementAtGaze
-  } = useGazeTracker()
+    session,
+    currentGaze,
+    enableGaze,
+    disableGaze,
+    startCalibration,
+    completeCalibration,
+    cancelCalibration,
+    pauseTracking,
+    resumeTracking,
+    resetCalibration,
+    getElementAtGaze,
+    isWebGazerLoaded,
+    isLoadingCalibration
+  } = useGaze()
+  
+  // Error handling integration
+  const { recordGazeUpdate } = useGazeErrorHandling()
 
   const [showCalibration, setShowCalibration] = useState(false)
-  const [isPaused, setIsPaused] = useState(false)
   const [lockedElement, setLockedElement] = useState<ElementLock | null>(null)
   const [showInstructionPanel, setShowInstructionPanel] = useState(false)
   const [lastResult, setLastResult] = useState('')
@@ -29,27 +60,66 @@ export default function Index() {
   const [focusedEl, setFocusedEl] = useState<HTMLElement | null>(null)
   const [seedSuggestion, setSeedSuggestion] = useState<string | undefined>(undefined)
   const [showSuggestions, setShowSuggestions] = useState(true)
+  const [showCameraPreview, setShowCameraPreview] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('clientsight_camera_visible')
+      return raw ? JSON.parse(raw) : true
+    } catch { return true }
+  })
   
-  // NEW: AI Component Generation (Cal Hacks 12.0 - Fetch.ai integration)
-  const [showComponentPanel, setShowComponentPanel] = useState(false)
-  const [generatedComponents, setGeneratedComponents] = useState<ComponentNode[]>([])
+  // Gaze data collection for AI page builder
   const [recentGazeData, setRecentGazeData] = useState<GazePoint[]>([])
-  const [previewComponent, setPreviewComponent] = useState<ComponentNode | null>(null)
   const [showPageBuilder, setShowPageBuilder] = useState(false)
   
-  // Collect gaze data for AI optimization (keep last 200 points)
-  useEffect(() => {
-    if (currentGaze) {
-      setRecentGazeData(prev => {
-        const newData = [...prev, currentGaze]
-        return newData.slice(-200) // Keep last 200 points
-      })
-    }
-  }, [currentGaze])
+  const [startTime] = useState(Date.now())
+  const [sessionDuration, setSessionDuration] = useState("0m 0s")
 
+  // Update session duration
   useEffect(() => {
-    if (isInitialized && !isCalibrated) setShowCalibration(true)
-  }, [isInitialized, isCalibrated])
+    const timer = setInterval(() => {
+      const diff = Date.now() - startTime
+      const mins = Math.floor(diff / 60000)
+      const secs = Math.floor((diff % 60000) / 1000)
+      setSessionDuration(`${mins}m ${secs}s`)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [startTime])
+
+  // Collect gaze data for AI optimization (keep last 100 points, throttled)
+  // Use a ref to track last collection time to prevent excessive updates
+  const lastGazeCollectionRef = useRef<number>(0)
+  
+  useEffect(() => {
+    if (!currentGaze) return
+    
+    // Record gaze update for stale detection
+    recordGazeUpdate()
+    
+    // Throttle collection to max 5 times per second to prevent memory issues
+    const now = Date.now()
+    if (now - lastGazeCollectionRef.current < 200) return
+    lastGazeCollectionRef.current = now
+    
+    setRecentGazeData(prev => {
+      // Keep last 100 points instead of 200 to reduce memory usage
+      if (prev.length >= 100) {
+        return [...prev.slice(-99), currentGaze]
+      }
+      return [...prev, currentGaze]
+    })
+  }, [currentGaze, recordGazeUpdate])
+
+  // Show calibration if gaze is enabled but not calibrated
+  useEffect(() => {
+    if (session.isGazeEnabled && !session.isCalibrated && session.gazeStatus === 'idle') {
+      setShowCalibration(true)
+    }
+  }, [session.isGazeEnabled, session.isCalibrated, session.gazeStatus])
+
+  // Persist camera visibility preference
+  useEffect(() => {
+    try { localStorage.setItem('clientsight_camera_visible', JSON.stringify(showCameraPreview)) } catch {}
+  }, [showCameraPreview])
 
   // Observe focused element by gaze
   useEffect(() => {
@@ -58,13 +128,19 @@ export default function Index() {
     setFocusedEl(el)
   }, [currentGaze, getElementAtGaze])
 
-  const handleCalibrationComplete = () => {
+  const handleCalibrationComplete = (accuracy?: number) => {
     setShowCalibration(false)
-    completeCalibration()
+    completeCalibration(accuracy ?? 78) // Default accuracy if not provided
+  }
+
+  const handleCalibrationSkip = () => {
+    setShowCalibration(false)
+    cancelCalibration()
   }
 
   const handleRecalibrate = () => {
     resetCalibration()
+    startCalibration()
     setShowCalibration(true)
   }
 
@@ -87,7 +163,7 @@ export default function Index() {
     }
   }, [currentGaze, getElementAtGaze])
 
-  // Hotkeys: Cmd/Ctrl+Alt+G to lock; Cmd/Ctrl+Alt+C to create; Cmd/Ctrl+Alt+P for Page Builder; Esc to close panel; Cmd/Ctrl+Alt+N new page
+  // Hotkeys
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
@@ -95,10 +171,6 @@ export default function Index() {
       if (meta && key === 'g') {
         e.preventDefault()
         lockGazedElement()
-      }
-      if (meta && key === 'c') {
-        e.preventDefault()
-        setShowComponentPanel(prev => !prev)
       }
       if (meta && key === 'p') {
         e.preventDefault()
@@ -113,35 +185,19 @@ export default function Index() {
           setShowInstructionPanel(false)
           setLockedElement(null)
         }
-        if (showComponentPanel) {
-          setShowComponentPanel(false)
-        }
         if (showPageBuilder) {
           setShowPageBuilder(false)
-        }
-        if (previewComponent) {
-          setPreviewComponent(null)
         }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [lockGazedElement, showInstructionPanel, showComponentPanel, showPageBuilder, previewComponent])
-  
-  const handleComponentGenerated = useCallback((component: ComponentNode) => {
-    setGeneratedComponents(prev => [...prev, component])
-    console.log('Component generated:', component)
-    
-    // Auto-open live preview for newly generated component
-    setTimeout(() => {
-      setPreviewComponent(component)
-    }, 500) // Small delay for smooth transition
-  }, [])
+  }, [lockGazedElement, showInstructionPanel, showPageBuilder])
 
   const handleInstructionSubmit = async (text: string) => {
     if (!lockedElement) return
     const intent = await parseInstructionSmart(text, lockedElement.element)
-    if (!intent) { setLastResult('❌ Could not understand instruction. Try: “Make this blue”.'); return }
+    if (!intent) { setLastResult('❌ Could not understand instruction. Try: "Make this blue".'); return }
     const result = applyIntent(lockedElement, intent)
     setLastResult(result.success ? `✅ ${result.message}` : `❌ ${result.message}`)
     if (result.success) setHistory([...history, lockedElement])
@@ -156,140 +212,242 @@ export default function Index() {
   }
 
   const togglePause = () => {
-    if (isPaused) resumeTracking(); else pauseTracking()
-    setIsPaused(!isPaused)
+    if (session.gazeStatus === 'idle') {
+      enableGaze()
+    } else if (session.gazeStatus === 'paused') {
+      resumeTracking()
+    } else if (session.gazeStatus === 'tracking') {
+      pauseTracking()
+    }
   }
 
-  if (error) {
-    return <div className="container"><div className="card">Error: {error}. Grant camera permissions.</div></div>
+  const toggleCamera = () => {
+    setShowCameraPreview(v => !v)
   }
-  if (!isInitialized) {
-    return <div className="container"><div className="card">Initializing Clientsight…</div></div>
-  }
-  if (showCalibration) {
-    return <Calibration onComplete={handleCalibrationComplete} onSkip={handleCalibrationComplete} />
-  }
-  if (showNewPage) {
+
+  // Error state - render with GazeErrorPanel, don't replace the whole page
+  // Instead, show the error inline and allow user to continue
+  // The GazeErrorBanner will also show in the bottom right corner
+
+  // Loading calibration state - render inline
+  if (isLoadingCalibration) {
     return (
-      <div className="container">
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-          <h1 style={{ fontSize:28 }}>Clientsight — New Page</h1>
-          <div style={{ display:'flex', gap:8 }}>
-            <button className="btn secondary" onClick={()=>setShowNewPage(false)}>Back</button>
-            <button className="btn secondary" onClick={handleRecalibrate}>Recalibrate</button>
+      <WorkspaceLayout>
+        <div className="flex flex-1 items-center justify-center bg-slate-50">
+          <div className="text-center space-y-4">
+            <div className="w-12 h-12 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            <p className="text-sm font-medium text-slate-500">Loading calibration data...</p>
           </div>
         </div>
-        <NewPage />
-      </div>
+      </WorkspaceLayout>
     )
   }
 
   return (
-    <div className="container">
-      <h1 style={{ fontSize:32, marginBottom:8 }}>
-        Clientsight <span style={{ fontSize:14, color:'#8b5cf6', fontWeight:500 }}>Cal Hacks 12.0</span>
-      </h1>
-      <p className="muted" style={{ marginBottom:16 }}>AI-powered UI generation with gaze tracking (Powered by Fetch.ai)</p>
-
-      <div className="row" style={{ marginBottom:16 }}>
-        <div className="card">
-          <h2 style={{ marginTop:0 }}>🚀 AI Generation (NEW)</h2>
-          <p className="muted">Build full pages like v0/Bolt.new with gaze-driven optimization</p>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <button 
-              className="btn" 
-              style={{ background: '#3b82f6', borderColor: '#3b82f6' }}
-              onClick={() => setShowPageBuilder(true)}
-            >
-              🏗️ Page Builder
-            </button>
-            <button 
-              className="btn" 
-              style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-              onClick={() => setShowComponentPanel(true)}
-            >
-              ✨ Generate Component
-            </button>
-            <button className="btn secondary" onClick={lockGazedElement}>Lock Element (Gaze)</button>
-            <button className="btn secondary" onClick={()=>setShowNewPage(true)}>New Page</button>
+    <WorkspaceLayout>
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Calibration flow overlay - appears on top but doesn't hide the page */}
+        {(showCalibration || session.gazeStatus === 'calibrating') && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm">
+            <Calibration onComplete={handleCalibrationComplete} onSkip={handleCalibrationSkip} />
           </div>
-          {generatedComponents.length > 0 && (
-            <p className="muted" style={{ marginTop:8, fontSize:12 }}>
-              Generated {generatedComponents.length} component(s) | {recentGazeData.length} gaze points tracked
-            </p>
-          )}
-        </div>
-        <div className="card">
-          <h2 style={{ marginTop:0 }}>Controls</h2>
-          <ul className="muted">
-            <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>P</kbd> → Page Builder</li>
-            <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd> → AI Generate</li>
-            <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>G</kbd> → Lock Element</li>
-            <li>• <kbd>⌘/Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>N</kbd> → New Page</li>
-            <li>• <kbd>Esc</kbd> → Close panels</li>
-          </ul>
-          <div style={{ marginTop:8 }}>
-            <button className="btn secondary" onClick={togglePause}>{isPaused ? 'Resume' : 'Pause'} Tracking</button>
-            <button className="btn secondary" onClick={handleUndo} style={{ marginLeft:8 }}>Undo ({history.length})</button>
-            <button className="btn secondary" onClick={handleRecalibrate} style={{ marginLeft:8 }}>Recalibrate</button>
-            <span className="muted" style={{ marginLeft:12 }}>Status: {isCalibrated ? '🟢 Calibrated' : '🟡 Not calibrated'}</span>
-            <label style={{ marginLeft:12, fontSize:12 }}>
-              <input type="checkbox" checked={showSuggestions} onChange={e=>setShowSuggestions(e.target.checked)} /> Show suggestions
-            </label>
-          </div>
-        </div>
-      </div>
+        )}
 
-      <div className="card" style={{ marginBottom:16 }}>
-        <h3 style={{ marginTop:0 }}>How it works</h3>
-        <p className="muted">Clientsight combines AI component generation (Fetch.ai agents) with webcam-based gaze tracking. Generate components from text, then optimize them based on where users actually look.</p>
-        <div style={{ marginTop:8, padding:8, background:'#8b5cf6', borderRadius:8, color:'white' }}>
-          <strong>Cal Hacks 12.0 Demo:</strong> Generate a component → Track your gaze → Get AI optimization suggestions
-        </div>
-      </div>
-      
-      {/* Display Generated Components */}
-      {generatedComponents.length > 0 && (
-        <div className="card" style={{ marginBottom:16 }}>
-          <h3 style={{ marginTop:0 }}>Generated Components ({generatedComponents.length})</h3>
-          <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
-            {generatedComponents.map((comp) => (
-              <div key={comp.id} className="card" style={{ flex:'1', minWidth:250, background:'#1a1a2e' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                  <strong style={{ color:'#8b5cf6' }}>{comp.name}</strong>
-                  <span className="muted" style={{ fontSize:10 }}>
-                    {comp.agentType === 'component-generator' && '🤖 Fetch.ai Agent'}
-                  </span>
+        {showNewPage ? (
+          <div className="p-6 h-full flex-1 flex flex-col">
+            <div className="flex items-center justify-between mb-6 text-slate-900">
+              <h1 className="text-2xl font-bold">New Page</h1>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowNewPage(false)}>Back</Button>
+                <Button onClick={handleRecalibrate}>Recalibrate</Button>
+              </div>
+            </div>
+            <div className="flex-1 bg-white rounded-xl shadow-sm border overflow-hidden">
+              <NewPage />
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Main Canvas Area */}
+            <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight">Workspace</h1>
+                  <p className="text-sm text-slate-500">Design informed by attention data</p>
                 </div>
-                <pre style={{ fontSize:10, overflow:'auto', maxHeight:100, background:'#0f0f1e', padding:8, borderRadius:4 }}>
-                  <code>{comp.code.slice(0, 150)}...</code>
-                </pre>
-                <div style={{ marginTop:8, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                  <div style={{ fontSize:10, color:'#6b7280' }}>
-                    {new Date(comp.createdAt).toLocaleTimeString()}
-                  </div>
-                  <button
-                    onClick={() => setPreviewComponent(comp)}
-                    className="btn"
-                    style={{ 
-                      fontSize:11, 
-                      padding:'4px 12px',
-                      background:'#8b5cf6',
-                      borderColor:'#8b5cf6'
-                    }}
-                  >
-                    👁️ View Live
-                  </button>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="bg-primary-50 text-primary-700 border-primary-100 px-3 py-1">
+                    <Sparkles className="w-3 h-3 mr-1.5" />
+                    Cal Hacks 12.0
+                  </Badge>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                {/* AI Page Builder Card - Main feature like v0/bolt/lovable */}
+                <Card className="border-primary-100 bg-primary-50/30 overflow-hidden relative">
+                  <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <Sparkles className="w-20 h-20 text-primary-600" />
+                  </div>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-primary-600" />
+                      AI Page Builder
+                    </CardTitle>
+                    <CardDescription>Build full pages with natural language and gaze-driven optimization — like v0, Bolt, or Lovable</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button 
+                      className="bg-primary-600 hover:bg-primary-700 shadow-sm w-full"
+                      onClick={() => setShowPageBuilder(true)}
+                    >
+                      <Layout className="w-4 h-4 mr-2" />
+                      Open Page Builder
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* Gaze Tracking Card */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Eye className="w-5 h-5 text-slate-600" />
+                      Gaze Tracking
+                    </CardTitle>
+                    <CardDescription>Enable eye tracking for attention-based design insights</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {session.gazeStatus === 'idle' && !session.isGazeEnabled ? (
+                      <Button 
+                        className="w-full bg-primary-600 hover:bg-primary-700"
+                        onClick={() => enableGaze()}
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        Enable Gaze Tracking
+                      </Button>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={lockGazedElement} disabled={!session.isCalibrated}>
+                          <Target className="w-4 h-4 mr-2" />
+                          Lock Element
+                        </Button>
+                        <Button variant="outline" onClick={() => setShowNewPage(true)}>
+                          <Plus className="w-4 h-4 mr-2" />
+                          New Canvas
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* How it works info */}
+              <Card className="mb-6 border-slate-200">
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                    <Lightbulb className="w-5 h-5 text-slate-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-slate-600">
+                      <span className="font-bold">How it works:</span> Open the <span className="font-semibold text-primary-700">Page Builder</span> to create complete web pages using natural language. With gaze tracking enabled, the AI will suggest improvements based on where you look.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Keyboard shortcuts info */}
+              <Card className="border-slate-200">
+                <CardContent className="p-4">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Keyboard Shortcuts</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="flex items-center gap-2 text-sm">
+                      <kbd className="px-2 py-1 bg-slate-100 border rounded text-xs font-mono">Alt+P</kbd>
+                      <span className="text-slate-600">Page Builder</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <kbd className="px-2 py-1 bg-slate-100 border rounded text-xs font-mono">Alt+G</kbd>
+                      <span className="text-slate-600">Lock Element</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <kbd className="px-2 py-1 bg-slate-100 border rounded text-xs font-mono">Alt+N</kbd>
+                      <span className="text-slate-600">New Canvas</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <kbd className="px-2 py-1 bg-slate-100 border rounded text-xs font-mono">Esc</kbd>
+                      <span className="text-slate-600">Close Panel</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Right Sidebar - Control & Suggestions */}
+            <aside className="w-80 border-l bg-white flex flex-col overflow-hidden">
+              <Tabs defaultValue="status" className="flex flex-col h-full">
+                <div className="px-4 pt-4 border-b">
+                  <TabsList className="w-full mb-4">
+                    <TabsTrigger value="status" className="flex-1">Status</TabsTrigger>
+                    <TabsTrigger value="history" className="flex-1">History</TabsTrigger>
+                  </TabsList>
+                </div>
+                
+                <div className="flex-1 overflow-hidden">
+                  <TabsContent value="status" className="h-full p-4 m-0 overflow-y-auto">
+                    <GazeControlPanel 
+                      isCalibrated={session.isCalibrated}
+                      isPaused={session.gazeStatus === 'paused'}
+                      gazeStatus={session.gazeStatus}
+                      onTogglePause={togglePause}
+                      onRecalibrate={handleRecalibrate}
+                      onUndo={handleUndo}
+                      historyCount={history.length}
+                      showCamera={showCameraPreview}
+                      onToggleCamera={toggleCamera}
+                      sessionDuration={sessionDuration}
+                      dataPointsCount={session.dataPointsCount}
+                      calibrationAccuracy={session.calibrationAccuracy}
+                    />
+                  </TabsContent>
+                  
+                  <TabsContent value="history" className="h-full m-0">
+                    <ScrollArea className="h-full p-4">
+                      {history.length === 0 ? (
+                        <div className="h-40 flex flex-col items-center justify-center text-center text-slate-400">
+                          <HistoryIcon className="w-8 h-8 mb-2 opacity-20" />
+                          <p className="text-xs">No change history yet</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {history.map((item, idx) => (
+                            <div key={idx} className="flex gap-3 relative pb-4 border-l-2 border-slate-100 ml-2 pl-4 last:border-0">
+                              <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-white border-2 border-primary-500" />
+                              <div className="space-y-1">
+                                <p className="text-xs font-bold">{item.role}</p>
+                                <p className="text-[10px] text-slate-500">Applied changes to element</p>
+                              </div>
+                            </div>
+                          )).reverse()}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </TabsContent>
+                </div>
+              </Tabs>
+            </aside>
+          </>
+        )}
+      </div>
+
+      {/* Overlay & Panels */}
       <GazeOverlay gazePoint={currentGaze} lockedElement={lockedElement} />
+      
+      {/* Camera Preview - Only show when gaze is enabled AND not calibrating */}
+      <CameraPreview 
+        visible={showCameraPreview && session.isGazeEnabled && !showCalibration && session.gazeStatus !== 'calibrating'} 
+        onClose={() => setShowCameraPreview(false)} 
+      />
 
-      {showSuggestions && (
+      {showSuggestions && session.isCalibrated && (
         <AutoSuggestionPanel
           visible={!!currentGaze}
           gaze={currentGaze}
@@ -312,23 +470,7 @@ export default function Index() {
         />
       )}
       
-      {/* NEW: AI Component Generation Panel (Cal Hacks 12.0) */}
-      <ComponentGenerationPanel
-        visible={showComponentPanel}
-        onClose={() => setShowComponentPanel(false)}
-        onComponentGenerated={handleComponentGenerated}
-        recentGazeData={recentGazeData}
-      />
-      
-      {/* Live Component Preview Modal */}
-      {previewComponent && (
-        <LiveComponentPreview
-          component={previewComponent}
-          onClose={() => setPreviewComponent(null)}
-        />
-      )}
-      
-      {/* Full Page Builder (v0/Bolt.new style) with Project Management */}
+      {/* Full Page Builder - Main feature like v0/bolt/lovable */}
       {showPageBuilder && (
         <FullPageBuilderWithProjects
           currentGaze={currentGaze}
@@ -336,6 +478,9 @@ export default function Index() {
           onClose={() => setShowPageBuilder(false)}
         />
       )}
-    </div>
+      
+      {/* Gaze Error Banner - shows at bottom right when errors occur */}
+      <GazeErrorBanner />
+    </WorkspaceLayout>
   )
 }

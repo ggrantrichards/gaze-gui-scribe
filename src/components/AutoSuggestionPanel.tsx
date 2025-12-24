@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { GazePoint } from '@/types'
 import { aiSuggestionsForElement } from '@/utils/nlpParser'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Sparkles, MousePointer2 } from 'lucide-react'
 
 type Props = {
   visible: boolean
@@ -9,7 +12,6 @@ type Props = {
   onPick: (suggestion: string) => void
 }
 
-/** Local heuristic suggestions used as a fallback when AI is unavailable or errors. */
 function localSuggestionsFor(el: HTMLElement | null): string[] {
   if (!el) return []
   const tag = el.tagName.toLowerCase()
@@ -32,7 +34,6 @@ function localSuggestionsFor(el: HTMLElement | null): string[] {
       'Widen by 20%',
     ]
   }
-  // Containers / text / default
   return [
     'Make this blue',
     'Add rounded corners',
@@ -42,15 +43,10 @@ function localSuggestionsFor(el: HTMLElement | null): string[] {
   ]
 }
 
-/** Build-time check for available AI keys. Works with either OpenAI or Gemini envs. */
 function aiEnabled(): boolean {
-  // Vite exposes env vars at build time via import.meta.env
   const hasOpenAI = Boolean((import.meta as any)?.env?.VITE_OPENAI_API_KEY)
   const hasGemini = Boolean((import.meta as any)?.env?.VITE_GEMINI_API_KEY)
-  // Optional runtime override for tests/demos
   const runtimeFlag = (window as any).__AI_ENABLED__
-
-  // Avoid mixing ?? with || (which requires parens in Babel).
   const anyKeyPresent = hasOpenAI || hasGemini
   const effective = runtimeFlag ?? anyKeyPresent
   return Boolean(effective)
@@ -59,15 +55,13 @@ function aiEnabled(): boolean {
 export function AutoSuggestionPanel({ visible, gaze, focusedEl, onPick }: Props) {
   const [items, setItems] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-
-  // Track mounted state to avoid setState after unmount.
   const mountedRef = useRef(true)
+
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
 
-  // Compute position FIRST to keep Hooks order stable across renders.
   const pos = useMemo(() => {
     const x = gaze?.x ?? 0
     const y = gaze?.y ?? 0
@@ -77,12 +71,9 @@ export function AutoSuggestionPanel({ visible, gaze, focusedEl, onPick }: Props)
     }
   }, [gaze?.x, gaze?.y])
 
-  // Re-fetch suggestions whenever the hovered/focused element changes.
   useEffect(() => {
     let cancelled = false
-
     async function load() {
-      // If nothing is focused, clear suggestions.
       if (!focusedEl) {
         if (!cancelled && mountedRef.current) {
           setItems([])
@@ -90,24 +81,18 @@ export function AutoSuggestionPanel({ visible, gaze, focusedEl, onPick }: Props)
         }
         return
       }
-
       if (!cancelled && mountedRef.current) setLoading(true)
-
       try {
         let out: string[] = []
         if (aiEnabled()) {
-          // Try AI first
           out = await aiSuggestionsForElement(focusedEl)
         } else {
-          // No API key configured -> local heuristics
           out = localSuggestionsFor(focusedEl)
         }
-
         if (!cancelled && mountedRef.current) {
           setItems(out.slice(0, 4))
         }
       } catch {
-        // On any failure, gracefully fall back to local suggestions
         const out = localSuggestionsFor(focusedEl)
         if (!cancelled && mountedRef.current) {
           setItems(out.slice(0, 4))
@@ -116,40 +101,44 @@ export function AutoSuggestionPanel({ visible, gaze, focusedEl, onPick }: Props)
         if (!cancelled && mountedRef.current) setLoading(false)
       }
     }
-
     load()
     return () => { cancelled = true }
   }, [focusedEl])
 
-  // After computing pos (above), we can safely early-return without affecting hook order.
   if (!visible || !gaze || (!items.length && !loading)) return null
 
   return (
-    <div style={{
-      position: 'fixed', left: pos.left, top: pos.top,
-      width: 240, zIndex: 9998,
-      background: 'rgba(15,23,42,0.96)', border: '1px solid #334155', borderRadius: 12, padding: 8
-    }}>
-      <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: 6 }}>
-        {loading ? 'Suggestions (AI)…' : 'Suggestions'}
-      </div>
-
-      {loading && (
-        <div className="muted" style={{ padding: '6px 8px' }}>
-          Thinking…
-        </div>
-      )}
-
-      {!loading && items.map((s, i) => (
-        <button
-          key={i}
-          onClick={() => onPick(s)}
-          className="btn secondary"
-          style={{ width: '100%', textAlign: 'left', marginBottom: 6 }}
-        >
-          {s}
-        </button>
-      ))}
+    <div 
+      className="fixed z-[9998] w-[260px] animate-in fade-in zoom-in-95 duration-200"
+      style={{ left: pos.left, top: pos.top }}
+    >
+      <Card className="shadow-2xl border-primary-100 bg-white/95 backdrop-blur-sm overflow-hidden">
+        <CardHeader className="p-3 bg-primary-50/50 border-b border-primary-100">
+          <CardTitle className="text-[10px] font-bold flex items-center gap-2 uppercase tracking-wider text-primary-700">
+            {loading ? <Sparkles className="w-3 h-3 animate-pulse" /> : <MousePointer2 className="w-3 h-3" />}
+            {loading ? 'Analyzing with AI...' : 'Smart Suggestions'}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-2 space-y-1">
+          {loading && (
+            <div className="flex flex-col gap-2 p-2">
+              <div className="h-8 bg-slate-100 animate-pulse rounded" />
+              <div className="h-8 bg-slate-100 animate-pulse rounded w-[80%]" />
+            </div>
+          )}
+          {!loading && items.map((s, i) => (
+            <Button
+              key={i}
+              variant="ghost"
+              size="sm"
+              onClick={() => onPick(s)}
+              className="w-full justify-start text-xs font-medium hover:bg-primary-50 hover:text-primary-700 h-8"
+            >
+              {s}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   )
 }

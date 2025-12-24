@@ -107,19 +107,48 @@ class ApplyEditRequest(BaseModel):
 # Agent addresses (will be populated on startup)
 AGENT_ADDRESSES = {}
 
+# Create Bureau to manage agents
+bureau = Bureau()
+bureau.add(component_generator)
+bureau.add(gaze_optimizer)
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize Fetch.ai agents on startup"""
     print("[STARTING] Starting ClientSight Agent API...")
     print("📡 Connecting to Fetch.ai agents...")
     
-    # Store agent addresses
-    AGENT_ADDRESSES['component_generator'] = component_generator.address
-    AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
-    
-    print(f"[OK] Component Generator: {component_generator.address}")
-    print(f"[OK] Gaze Optimizer: {gaze_optimizer.address}")
-    print("[SUCCESS] All agents ready!")
+    # Start Bureau in background (this starts the agents)
+    try:
+        # Run Bureau in a background thread (it's a blocking call)
+        import threading
+        def run_bureau():
+            try:
+                bureau.run()
+            except Exception as e:
+                print(f"[WARN] Bureau runtime error: {e}")
+        
+        bureau_thread = threading.Thread(target=run_bureau, daemon=True)
+        bureau_thread.start()
+        
+        # Give agents a moment to start and register
+        await asyncio.sleep(3)
+        
+        # Store agent addresses
+        AGENT_ADDRESSES['component_generator'] = component_generator.address
+        AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
+        
+        print(f"[OK] Component Generator: {component_generator.address}")
+        print(f"[OK] Gaze Optimizer: {gaze_optimizer.address}")
+        print("[SUCCESS] All agents ready!")
+        print("💡 Note: Agents communicate via Bureau internally")
+    except Exception as e:
+        print(f"[WARN] Agent startup issue (will continue): {e}")
+        import traceback
+        traceback.print_exc()
+        # Store addresses anyway (they might still work)
+        AGENT_ADDRESSES['component_generator'] = component_generator.address
+        AGENT_ADDRESSES['gaze_optimizer'] = gaze_optimizer.address
 
 @app.get("/")
 async def root():
@@ -158,11 +187,16 @@ async def generate_multi_section_stream(request: ComponentRequest):
     Generate multiple sections with real-time streaming updates
     Sends updates as each section completes
     """
+    print(f"[ENDPOINT] /api/generate-multi-section-stream called")
+    print(f"[ENDPOINT] Request prompt: {request.prompt[:100]}...")
+    
     async def generate_sections_stream():
         try:
             request_id = str(uuid.uuid4())
             
             print(f"[RECEIVED] Received multi-section streaming request: {request.prompt}")
+            print(f"[DEBUG] Request ID: {request_id}")
+            print(f"[DEBUG] Output format: {request.outputFormat}")
             
             # Import utilities
             from utils.section_splitter import split_into_sections
@@ -171,6 +205,10 @@ async def generate_multi_section_stream(request: ComponentRequest):
             from prompts.landing_page_prompts import get_landing_page_system_prompt, get_component_system_prompt
             from prompts.typescript_prompts import get_typescript_landing_page_prompt, get_typescript_component_prompt
             from utils.code_validator import validate_component_code, clean_and_validate_code
+            
+            # Check OpenRouter availability
+            print(f"[DEBUG] OpenRouter available: {openrouter_client.available}")
+            print(f"[DEBUG] OpenAI client available: {openai_client is not None}")
             
             # Analyze prompt
             analysis = split_into_sections(request.prompt)
@@ -185,14 +223,13 @@ async def generate_multi_section_stream(request: ComponentRequest):
             # Send initial status with section names
             yield f"data: {json.dumps({'type': 'init', 'total_sections': len(section_prompts), 'section_names': [s['name'] for s in section_prompts], 'page_type': page_type})}\n\n"
             
-            # Generate each section and stream updates
-            for section_info in section_prompts:
+            # Helper function to generate a single section
+            async def generate_single_section(section_info: Dict, idx: int) -> Dict:
+                """Generate a single section and return result"""
                 section_name = section_info['name']
                 section_prompt = section_info['prompt']
                 
-                # Send "generating" status
-                yield f"data: {json.dumps({'type': 'status', 'section': section_name, 'status': 'generating'})}\n\n"
-                
+                print(f"[INFO] Processing section {idx}/{len(section_prompts)}: {section_name}")
                 print(f"[PROCESSING] Generating {section_name}...")
                 
                 # Choose system prompt
@@ -204,32 +241,64 @@ async def generate_multi_section_stream(request: ComponentRequest):
                 # Try to generate with retry logic
                 code = None
                 attempt = 0
-                max_attempts = 3
+                max_attempts = 2  # Reduced from 3 for speed
                 
                 while attempt < max_attempts and not code:
                     attempt += 1
                     
                     try:
-                        temp_code = await openrouter_client.generate(
+                        print(f"[DEBUG] Attempting OpenRouter generation for {section_name} (Attempt {attempt})...")
+                        raw_response = await openrouter_client.generate(
                             prompt=section_prompt,
                             system_prompt=system_prompt,
                             model="auto",
                             temperature=0.7 + (attempt * 0.1),
-                            max_tokens=3000  # Increased for complex sections
+                            max_tokens=2500  # Slightly reduced for speed
                         )
                         
+                        # Extract code from markdown/explanatory text
+                        import re
+                        temp_code = raw_response
+                        
+                        # Try to extract code block first
+                        code_block_match = re.search(r'```(?:tsx?|jsx?|typescript|javascript)?\n(.*?)```', raw_response, re.DOTALL)
+                        if code_block_match:
+                            temp_code = code_block_match.group(1).strip()
+                            print(f"[DEBUG] Extracted code from markdown block ({len(temp_code)} chars)")
+                        else:
+                            # If no code block, try to find the first function/export statement
+                            # Remove explanatory text before the actual code
+                            lines = raw_response.split('\n')
+                            code_start_idx = None
+                            for i, line in enumerate(lines):
+                                if re.match(r'^\s*(export\s+)?(function|const)\s+\w+', line):
+                                    code_start_idx = i
+                                    break
+                            
+                            if code_start_idx is not None:
+                                temp_code = '\n'.join(lines[code_start_idx:]).strip()
+                                print(f"[DEBUG] Extracted code starting at line {code_start_idx} ({len(temp_code)} chars)")
+                            else:
+                                # Last resort: remove lines that look like explanations
+                                code_lines = []
+                                for line in lines:
+                                    # Skip lines that are clearly explanations (not code)
+                                    if not re.match(r'^(Apologies|Here|This|Note:|Please|You|We|I|The|As|For|In|On|At|To|From|With|Without|Using|When|Where|Why|How|What|Which|That|This|These|Those)', line, re.IGNORECASE):
+                                        code_lines.append(line)
+                                temp_code = '\n'.join(code_lines).strip()
+                                print(f"[DEBUG] Cleaned explanatory text ({len(temp_code)} chars)")
+                        
+                        print(f"[DEBUG] OpenRouter returned code ({len(temp_code)} chars)")
                         is_valid, error_msg = validate_component_code(temp_code, section_name)
                         if is_valid:
                             code = temp_code
                             print(f"[OK] Generated {section_name} - Attempt {attempt} ({len(temp_code)} chars)")
                         else:
                             print(f"[WARN] Invalid code (Attempt {attempt}): {error_msg}")
-                            print(f"   Code length: {len(temp_code)} chars")
-                            print(f"   First 200 chars: {temp_code[:200]}")
                     except Exception as e:
-                        print(f"[WARN] Generation failed (Attempt {attempt}): {e}")
+                        print(f"[ERROR] OpenRouter generation failed (Attempt {attempt}): {str(e)}")
                     
-                    # Fallback to OpenAI if needed
+                    # Fallback to OpenAI if needed (only on last attempt)
                     if not code and openai_client and attempt == max_attempts:
                         try:
                             response = await openai_client.chat.completions.create(
@@ -239,9 +308,39 @@ async def generate_multi_section_stream(request: ComponentRequest):
                                     {"role": "user", "content": section_prompt}
                                 ],
                                 temperature=0.7,
-                                max_tokens=3000  # Increased for complex sections
+                                max_tokens=2500
                             )
-                            temp_code = response.choices[0].message.content
+                            raw_response = response.choices[0].message.content
+                            
+                            # Extract code from markdown/explanatory text (same logic as OpenRouter)
+                            import re
+                            temp_code = raw_response
+                            
+                            # Try to extract code block first
+                            code_block_match = re.search(r'```(?:tsx?|jsx?|typescript|javascript)?\n(.*?)```', raw_response, re.DOTALL)
+                            if code_block_match:
+                                temp_code = code_block_match.group(1).strip()
+                                print(f"[DEBUG] Extracted code from markdown block ({len(temp_code)} chars)")
+                            else:
+                                # If no code block, try to find the first function/export statement
+                                lines = raw_response.split('\n')
+                                code_start_idx = None
+                                for i, line in enumerate(lines):
+                                    if re.match(r'^\s*(export\s+)?(function|const)\s+\w+', line):
+                                        code_start_idx = i
+                                        break
+                                
+                                if code_start_idx is not None:
+                                    temp_code = '\n'.join(lines[code_start_idx:]).strip()
+                                    print(f"[DEBUG] Extracted code starting at line {code_start_idx} ({len(temp_code)} chars)")
+                                else:
+                                    # Remove explanatory text
+                                    code_lines = []
+                                    for line in lines:
+                                        if not re.match(r'^(Apologies|Here|This|Note:|Please|You|We|I|The|As|For|In|On|At|To|From|With|Without|Using|When|Where|Why|How|What|Which|That|This|These|Those)', line, re.IGNORECASE):
+                                            code_lines.append(line)
+                                    temp_code = '\n'.join(code_lines).strip()
+                                    print(f"[DEBUG] Cleaned explanatory text ({len(temp_code)} chars)")
                             
                             is_valid, error_msg = validate_component_code(temp_code, section_name)
                             if is_valid:
@@ -268,8 +367,7 @@ async def generate_multi_section_stream(request: ComponentRequest):
   )
 }}"""
                 
-                # Send "completed" status with section data
-                section_result = {
+                return {
                     'type': 'section_complete',
                     'section': section_name,
                     'status': 'completed',
@@ -278,13 +376,54 @@ async def generate_multi_section_stream(request: ComponentRequest):
                         'sectionName': section_name,
                         'componentType': section_info.get('type', 'section'),
                         'dependencies': [],
-                        'sectionOrder': section_info['order'],
+                        'sectionOrder': section_info.get('order', idx - 1),
                         'requestId': request_id
-                    }
+                    },
+                    'idx': idx
                 }
+            
+            # Send "generating" status for all sections immediately
+            print(f"[INFO] Starting PARALLEL generation of {len(section_prompts)} sections")
+            for idx, section_info in enumerate(section_prompts, 1):
+                section_name = section_info['name']
+                yield f"data: {json.dumps({'type': 'status', 'section': section_name, 'status': 'generating'})}\n\n"
+            
+            # Generate all sections in parallel using asyncio tasks
+            tasks = [
+                asyncio.create_task(generate_single_section(section_info, idx)) 
+                for idx, section_info in enumerate(section_prompts, 1)
+            ]
+            
+            # Process results as they complete (not necessarily in order)
+            # This allows faster sections to be sent to the client immediately
+            completed_count = 0
+            pending = set(tasks)
+            
+            while pending:
+                # Wait for at least one task to complete
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 
-                yield f"data: {json.dumps(section_result)}\n\n"
-                print(f"[OK] Section {section_name} complete, sent to client")
+                for task in done:
+                    try:
+                        section_result = await task
+                        completed_count += 1
+                        
+                        # Ensure the data is properly serialized
+                        try:
+                            section_json = json.dumps(section_result)
+                            yield f"data: {section_json}\n\n"
+                            print(f"[OK] Section {section_result['section']} complete ({completed_count}/{len(section_prompts)}), sent to client")
+                            print(f"[DEBUG] Section {section_result['section']} code length: {len(section_result['data']['code'])} chars")
+                        except Exception as json_error:
+                            print(f"[ERROR] Failed to serialize section {section_result.get('section', 'unknown')}: {json_error}")
+                            import traceback
+                            traceback.print_exc()
+                            yield f"data: {json.dumps({'type': 'error', 'section': section_result.get('section', 'unknown'), 'message': 'Failed to serialize section data'})}\n\n"
+                    except Exception as e:
+                        print(f"[ERROR] Section generation failed: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        yield f"data: {json.dumps({'type': 'error', 'section': 'unknown', 'message': str(e)})}\n\n"
             
             # Send final completion message
             yield f"data: {json.dumps({'type': 'complete', 'message': 'All sections generated'})}\n\n"
@@ -292,6 +431,8 @@ async def generate_multi_section_stream(request: ComponentRequest):
             
         except Exception as e:
             print(f"[ERROR] Error in streaming generation: {str(e)}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     return StreamingResponse(
@@ -300,6 +441,10 @@ async def generate_multi_section_stream(request: ComponentRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
 

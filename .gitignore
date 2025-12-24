@@ -35,6 +35,8 @@ status
 .firebase
 firebase-debug.log
 
-# Local Netlify folder
-.netlify
-.env
+# Playwright / MCP screenshots
+.playwright-mcp
+playwright-report
+test-results
+*.screenshot.png

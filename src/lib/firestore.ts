@@ -362,3 +362,135 @@ export async function toggleProjectStar(projectId: string): Promise<void> {
   })
 }
 
+// ============================================================================
+// CALIBRATION OPERATIONS
+// ============================================================================
+
+/**
+ * Calibration data stored in Firebase
+ * Note: We only store metadata, not the raw WebGazer data (privacy + size concerns)
+ */
+export interface CalibrationMetadata {
+  userId: string
+  timestamp: number
+  accuracy: number
+  deviceFingerprint: string
+  browserInfo: {
+    userAgent: string
+    screenWidth: number
+    screenHeight: number
+  }
+  createdAt: Timestamp
+  updatedAt: Timestamp
+}
+
+/**
+ * Generate a device fingerprint for identifying calibrations across sessions
+ * This is a simple hash of browser/screen info - not for tracking, just for matching calibrations
+ */
+export function generateDeviceFingerprint(): string {
+  const info = {
+    userAgent: navigator.userAgent,
+    screen: `${window.screen.width}x${window.screen.height}`,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    language: navigator.language
+  }
+  // Simple hash - not cryptographically secure, just for matching
+  return btoa(JSON.stringify(info)).slice(0, 32)
+}
+
+/**
+ * Save calibration metadata to Firebase
+ * Stored at: users/{userId}/calibration/latest
+ */
+export async function saveCalibrationToFirebase(
+  userId: string,
+  accuracy: number
+): Promise<void> {
+  const deviceFingerprint = generateDeviceFingerprint()
+  
+  const calibrationData: Omit<CalibrationMetadata, 'createdAt' | 'updatedAt'> & { 
+    createdAt: ReturnType<typeof serverTimestamp>
+    updatedAt: ReturnType<typeof serverTimestamp> 
+  } = {
+    userId,
+    timestamp: Date.now(),
+    accuracy,
+    deviceFingerprint,
+    browserInfo: {
+      userAgent: navigator.userAgent,
+      screenWidth: window.screen.width,
+      screenHeight: window.screen.height
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }
+  
+  // Save to users/{userId}/calibration/latest
+  const calibrationRef = doc(db, 'users', userId, 'calibration', 'latest')
+  await setDoc(calibrationRef, calibrationData)
+  
+  console.log('[Firestore] Calibration metadata saved to Firebase')
+}
+
+/**
+ * Load calibration metadata from Firebase
+ * Returns null if no calibration exists or if it's too old (>30 days)
+ */
+export async function loadCalibrationFromFirebase(
+  userId: string
+): Promise<CalibrationMetadata | null> {
+  try {
+    const calibrationRef = doc(db, 'users', userId, 'calibration', 'latest')
+    const calibrationDoc = await getDoc(calibrationRef)
+    
+    if (!calibrationDoc.exists()) {
+      console.log('[Firestore] No calibration found in Firebase')
+      return null
+    }
+    
+    const data = calibrationDoc.data() as CalibrationMetadata
+    
+    // Check if calibration is too old (>30 days)
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+    if (Date.now() - data.timestamp > THIRTY_DAYS_MS) {
+      console.log('[Firestore] Calibration is older than 30 days, considered stale')
+      return null
+    }
+    
+    // Check if device fingerprint matches (same device/screen)
+    const currentFingerprint = generateDeviceFingerprint()
+    if (data.deviceFingerprint !== currentFingerprint) {
+      console.log('[Firestore] Calibration from different device/screen, may need recalibration')
+      // Still return the data, but caller can decide whether to use it
+    }
+    
+    console.log('[Firestore] Calibration metadata loaded from Firebase')
+    return data
+  } catch (error) {
+    console.error('[Firestore] Error loading calibration from Firebase:', error)
+    return null
+  }
+}
+
+/**
+ * Delete calibration data from Firebase
+ */
+export async function deleteCalibrationFromFirebase(userId: string): Promise<void> {
+  try {
+    const calibrationRef = doc(db, 'users', userId, 'calibration', 'latest')
+    await deleteDoc(calibrationRef)
+    console.log('[Firestore] Calibration deleted from Firebase')
+  } catch (error) {
+    console.error('[Firestore] Error deleting calibration from Firebase:', error)
+  }
+}
+
+/**
+ * Check if user has valid calibration in Firebase
+ */
+export async function hasValidCalibration(userId: string): Promise<boolean> {
+  const calibration = await loadCalibrationFromFirebase(userId)
+  return calibration !== null
+}
+

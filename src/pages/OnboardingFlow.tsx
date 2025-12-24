@@ -37,7 +37,16 @@ export function OnboardingFlow() {
     // If already completed onboarding and calibration, go to main app
     if (userProfile?.onboardingCompleted && userProfile?.calibrationCompleted) {
       navigate('/app')
+      return
     }
+
+    // Fallback: if local calibration exists, skip onboarding even if profile flags are missing
+    try {
+      const hasCal = !!localStorage.getItem('clientsight_calibration_v2')
+      if (hasCal) {
+        navigate('/app')
+      }
+    } catch {}
   }, [user, userProfile, navigate])
 
   const steps: Array<{ id: OnboardingStep; title: string; progress: number }> = [
