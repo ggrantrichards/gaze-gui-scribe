@@ -263,14 +263,40 @@ export function PageBuilderCanvas({
                   // Set up auto-resize with postMessage for accurate heights
                   iframe.dataset.resized = 'true'
                   
-                  // Listen for height updates from iframe
+                  // Listen for messages from iframes (resize + diagnostics)
                   window.addEventListener('message', (event) => {
-                    if (event.data?.type === 'RESIZE_IFRAME' && event.data.height) {
+                    const data = event.data
+                    if (!data || typeof data !== 'object') return
+
+                    // Height updates
+                    if (data.type === 'RESIZE_IFRAME' && data.height) {
                       const iframes = document.querySelectorAll('iframe')
                       iframes.forEach(f => {
                         if (f.contentWindow === event.source) {
-                          f.style.height = `${event.data.height}px`
+                          f.style.height = `${data.height}px`
                         }
+                      })
+                      return
+                    }
+
+                    // Console forwarding from iframe
+                    if (data.type === 'IFRAME_CONSOLE') {
+                      const args = Array.isArray(data.args) ? data.args : [data.args]
+                      const prefix = `[Section:${data.section || 'unknown'}]`
+                      if (data.level === 'warn') console.warn(prefix, ...args)
+                      else if (data.level === 'error') console.error(prefix, ...args)
+                      else console.log(prefix, ...args)
+                      return
+                    }
+
+                    // Error forwarding from iframe
+                    if (data.type === 'IFRAME_ERROR') {
+                      const prefix = `[Section:${data.section || 'unknown'}]`
+                      console.error(prefix, data.message || 'Iframe error', {
+                        source: data.source,
+                        line: data.lineno,
+                        column: data.colno,
+                        stack: data.stack
                       })
                     }
                   })
@@ -463,11 +489,35 @@ export function PageBuilderCanvas({
  */
 function buildSectionHTML(componentCode: string): string {
   // Clean up code - remove imports but keep function declarations
-  const cleanedCode = componentCode
-    .replace(/^import\s+.*from.*$/gm, '') // Remove all import statements
-    .replace(/^export\s+default\s+/gm, '') // Remove "export default "
-    .replace(/^export\s+(?=function|const)/gm, '') // Remove "export " before function/const
+  let cleanedCode = componentCode
+    // Remove markdown code blocks if present
+    .replace(/^```[\w]*\n/gm, '') // Remove opening code block
+    .replace(/```$/gm, '') // Remove closing code block
+    // Remove all import statements (including TypeScript imports)
+    .replace(/^import\s+.*from\s+['"].*['"];?$/gm, '')
+    .replace(/^import\s+type\s+.*from\s+['"].*['"];?$/gm, '')
+    // Remove export default
+    .replace(/^export\s+default\s+/gm, '')
+    // Remove export keyword before function/const/class
+    .replace(/^export\s+(?=function|const|class)/gm, '')
+    // Remove TypeScript interface/type declarations (entire lines)
+    .replace(/^\s*(interface|type)\s+\w+.*$/gm, '')
+    // Remove simple type annotations (be conservative)
+    .replace(/:\s*(string|number|boolean|any|void|null|undefined)(\s*[=,;\)\]\}])/g, '$2')
+    // Ensure React hooks use React. prefix (if not already)
+    .replace(/\buseState\(/g, 'React.useState(')
+    .replace(/\buseRef\(/g, 'React.useRef(')
+    .replace(/\buseEffect\(/g, 'React.useEffect(')
+    .replace(/\buseCallback\(/g, 'React.useCallback(')
+    .replace(/\buseMemo\(/g, 'React.useMemo(')
+    // Remove duplicate React. prefixes (in case code already had React.useState)
+    .replace(/React\.React\./g, 'React.')
     .trim()
+  
+  // Remove any remaining empty lines at the start
+  cleanedCode = cleanedCode.replace(/^\s*\n+/gm, '')
+  // IMPORTANT: Do NOT escape template literals or ${} in generated code now that we
+  // deliver it via Base64 and compile with Babel. Escaping would corrupt valid TSX.
 
   // Extract component name - multiple patterns to catch different formats
   let componentName = 'Component'
@@ -500,6 +550,17 @@ function buildSectionHTML(componentCode: string): string {
   console.log('📝 Code length:', componentCode.length, 'chars')
   console.log('📄 First 200 chars:', componentCode.substring(0, 200))
 
+  // Base64-encode the code in a browser-safe way (handles Unicode)
+  const codeB64 = ((): string => {
+    try {
+      const utf8 = encodeURIComponent(cleanedCode).replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode(parseInt(p1, 16)))
+      // @ts-ignore
+      return (typeof btoa === 'function' ? btoa(utf8) : '')
+    } catch {
+      return ''
+    }
+  })()
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -523,6 +584,59 @@ function buildSectionHTML(componentCode: string): string {
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    // Preload and compile the generated component code using Babel, then eval
+    (function(){
+      try {
+        // Prevent Babel from scanning <script type="text/babel"> tags automatically
+        try { if (window.Babel && typeof window.Babel.disableScriptTags === 'function') { window.Babel.disableScriptTags(); } } catch(_) {}
+        var CODE_B64 = '${codeB64}';
+        function b64ToUtf8(b64){
+          try {
+            var bin = atob(b64);
+            var esc = '';
+            for (var i=0;i<bin.length;i++) {
+              var h = bin.charCodeAt(i).toString(16).padStart(2,'0');
+              esc += '%' + h;
+            }
+            return decodeURIComponent(esc);
+          } catch (e) { return ''; }
+        }
+        var code = b64ToUtf8(CODE_B64);
+        if (code) {
+          var result = Babel.transform(code, { presets: ['react','typescript'], filename: 'component.tsx' });
+          // Eval the compiled code
+          try { 
+            (0, eval)(result.code);
+            // After eval, try to find and expose the component
+            var compName = '${componentName}';
+            if (typeof window[compName] === 'undefined' && typeof eval('typeof ' + compName) !== 'undefined') {
+              try {
+                window[compName] = eval(compName);
+                console.log('Exposed component:', compName);
+              } catch(e) {
+                console.warn('Could not expose component:', compName, e);
+              }
+            }
+            // Also check if it's already on window
+            if (typeof window[compName] !== 'undefined') {
+              console.log('Component found on window:', compName);
+            } else {
+              console.warn('Component not found after compilation:', compName, 'Available:', Object.keys(window).filter(function(k) { return /^[A-Z]/.test(k); }).slice(0, 10));
+            }
+          } catch (e) {
+            console.error('Component eval error:', e);
+            window.parent && window.parent.postMessage({ type: 'IFRAME_ERROR', section: '${componentName}', message: e && (e.message || String(e)), stack: e && e.stack }, '*');
+          }
+        } else {
+          console.error('Failed to decode code from Base64');
+        }
+      } catch (e) {
+        console.error('Precompile error:', e);
+        try { window.parent.postMessage({ type: 'IFRAME_ERROR', section: '${componentName}', message: e && (e.message || String(e)), stack: e && e.stack }, '*'); } catch(_) {}
+      }
+    })();
+  </script>
   <style>
     * {
       margin: 0;
@@ -557,61 +671,94 @@ function buildSectionHTML(componentCode: string): string {
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" data-presets="react,typescript">
-    // React hooks available as React.useState, React.useEffect, etc.
-    // Components should use this format directly
+  <script>
+    // Diagnostics: forward console and errors to parent window
+    (function(){
+      const SECTION_NAME = '${componentName}';
+      function post(type, payload){
+        try { window.parent.postMessage(Object.assign({ type, section: SECTION_NAME }, payload || {}), '*'); } catch (_) {}
+      }
+      ['log','warn','error'].forEach(function(level){
+        var orig = console[level];
+        console[level] = function(){
+          try { post('IFRAME_CONSOLE', { level: level, args: Array.prototype.slice.call(arguments).map(function(a){ try { return typeof a === 'string' ? a : JSON.stringify(a); } catch(_) { return String(a); } }) }); } catch(_) {}
+          try { return orig.apply(console, arguments); } catch(_) {}
+        };
+      });
+      window.onerror = function(message, source, lineno, colno, error){
+        post('IFRAME_ERROR', { message: String(message), source: source, lineno: lineno, colno: colno, stack: error && error.stack });
+      };
+      window.addEventListener('unhandledrejection', function(e){
+        var reason = e && e.reason ? e.reason : null;
+        post('IFRAME_ERROR', { message: reason && reason.message ? reason.message : 'Unhandled promise rejection', stack: reason && reason.stack ? reason.stack : null });
+      });
+    })();
+  </script>
+  <script type="text/javascript">
+    // Error Boundary class component (no JSX)
+    function ErrorBoundaryClass() {}
+    ErrorBoundaryClass.prototype = Object.create(React.Component.prototype);
+    ErrorBoundaryClass.prototype.constructor = ErrorBoundaryClass;
+    ErrorBoundaryClass.prototype.getInitialState = function() {
+      return { hasError: false, error: null };
+    };
+    ErrorBoundaryClass.prototype.getDerivedStateFromError = function(error) {
+      return { hasError: true, error: error };
+    };
+    ErrorBoundaryClass.prototype.componentDidCatch = function(error, errorInfo) {
+      console.error('Component error:', error, errorInfo);
+      try {
+        window.parent.postMessage({
+          type: 'IFRAME_ERROR',
+          section: '${componentName}',
+          message: error && (error.message || String(error)),
+          stack: error && error.stack
+        }, '*');
+      } catch (_) {}
+    };
+    ErrorBoundaryClass.prototype.render = function() {
+      if (this.state && this.state.hasError) {
+        return React.createElement('div', {
+          style: {
+            padding: '20px',
+            background: 'rgb(254, 226, 226)',
+            color: 'rgb(153, 27, 27)',
+            borderRadius: '8px',
+            margin: '20px',
+            fontFamily: 'sans-serif'
+          }
+        }, [
+          React.createElement('h2', { key: 'h2', style: { margin: '0 0 10px 0' } }, 'Section Error'),
+          React.createElement('p', { key: 'p' }, this.state.error && (this.state.error.message || 'Unknown error')),
+          React.createElement('details', { key: 'details', style: { marginTop: '10px', fontSize: '12px' } }, [
+            React.createElement('summary', { key: 'summary' }, 'Stack Trace'),
+            React.createElement('pre', { key: 'pre', style: { marginTop: '5px', overflow: 'auto' } }, this.state.error && this.state.error.stack)
+          ])
+        ]);
+      }
+      return this.props.children;
+    };
+    var ErrorBoundary = ErrorBoundaryClass;
 
-    // Error Boundary
-    class ErrorBoundary extends React.Component {
-      constructor(props) {
-        super(props);
-        this.state = { hasError: false, error: null };
-      }
-      static getDerivedStateFromError(error) {
-        return { hasError: true, error };
-      }
-      componentDidCatch(error, errorInfo) {
-        console.error('❌ Component error:', error, errorInfo);
-      }
-      render() {
-        if (this.state.hasError) {
-          return (
-            <div style={{
-              padding: '20px',
-              background: '#fee2e2',
-              color: '#991b1b',
-              borderRadius: '8px',
-              margin: '20px',
-              fontFamily: 'sans-serif'
-            }}>
-              <h2 style={{ margin: '0 0 10px 0' }}>⚠️ Section Error</h2>
-              <p>{this.state.error?.message || 'Unknown error'}</p>
-              <details style={{ marginTop: '10px', fontSize: '12px' }}>
-                <summary>Stack Trace</summary>
-                <pre style={{ marginTop: '5px', overflow: 'auto' }}>{this.state.error?.stack}</pre>
-              </details>
-            </div>
-          );
-        }
-        return this.props.children;
-      }
-    }
-    
-    // Component code
-    ${cleanedCode}
-    
-    // Render
+    // Render (no JSX here to avoid Babel parsing)
     try {
-      console.log('🚀 Rendering: ${componentName}');
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(
-        <React.StrictMode>
-          <ErrorBoundary>
-            <${componentName} />
-          </ErrorBoundary>
-        </React.StrictMode>
+      console.log('Rendering:', '${componentName}');
+      var RootComp = (window && window['${componentName}']) || (typeof ${componentName} !== 'undefined' ? ${componentName} : null);
+      if (!RootComp) { 
+        throw new Error('Component ${componentName} not found after compilation. Available globals: ' + Object.keys(window).filter(k => /^[A-Z]/.test(k)).join(', '));
+      }
+      var root = ReactDOM.createRoot(document.getElementById('root'));
+      var tree = React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(
+          ErrorBoundary,
+          null,
+          React.createElement(RootComp, null)
+        )
       );
-      console.log('✅ ${componentName} rendered successfully');
+      root.render(tree);
+      console.log('Component rendered successfully:', '${componentName}');
       
       // Send height to parent for accurate sizing
       setTimeout(() => {
@@ -622,7 +769,7 @@ function buildSectionHTML(componentCode: string): string {
           document.documentElement.offsetHeight,
           document.getElementById('root')?.offsetHeight || 0
         );
-        console.log('📏 Sending height to parent:', height);
+        console.log('Sending height to parent:', height);
         window.parent.postMessage({
           type: 'RESIZE_IFRAME',
           height: height + 20
@@ -644,14 +791,35 @@ function buildSectionHTML(componentCode: string): string {
         }, '*');
       }, 1000);
     } catch (error) {
-      console.error('❌ Render error:', error);
-      document.getElementById('root').innerHTML = \`
-        <div style="padding: 20px; background: #fee2e2; color: #991b1b; border-radius: 8px; margin: 20px;">
-          <h2>⚠️ Failed to Render</h2>
-          <p><strong>Error:</strong> \${error.message}</p>
-          <p style="margin-top: 10px; font-size: 12px;">Check console for details (F12)</p>
-        </div>
-      \`;
+      console.error('Render error:', error);
+      const rootEl = document.getElementById('root');
+      if (rootEl) {
+        rootEl.innerHTML = '';
+        
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'padding: 20px; background: rgb(254, 226, 226); color: rgb(153, 27, 27); border-radius: 8px; margin: 20px; font-family: sans-serif;';
+        
+        const h2 = document.createElement('h2');
+        h2.style.cssText = 'margin: 0 0 10px 0;';
+        h2.textContent = 'Failed to Render';
+        errorDiv.appendChild(h2);
+        
+        const p1 = document.createElement('p');
+        p1.style.cssText = 'margin: 0 0 10px 0;';
+        const strong = document.createElement('strong');
+        strong.textContent = 'Error: ';
+        p1.appendChild(strong);
+        const errorText = document.createTextNode(error && error.message ? error.message : 'Unknown error');
+        p1.appendChild(errorText);
+        errorDiv.appendChild(p1);
+        
+        const p2 = document.createElement('p');
+        p2.style.cssText = 'margin-top: 10px; font-size: 12px;';
+        p2.textContent = 'Check console for details (F12)';
+        errorDiv.appendChild(p2);
+        
+        rootEl.appendChild(errorDiv);
+      }
     }
   </script>
 </body>

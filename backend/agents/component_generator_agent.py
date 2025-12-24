@@ -46,11 +46,14 @@ else:
     openai_client = None
 
 # Create Component Generator Agent
+# For cloud deployment: agents communicate via Bureau internally, no separate HTTP endpoints needed
+# In Railway, we only expose the FastAPI server on PORT, agents communicate via Bureau
 component_generator = Agent(
     name="component_generator",
-    port=8001,
+    port=8001,  # Internal port for Bureau communication
     seed="component_generator_seed_phrase_calhacks",
-    endpoint=["http://localhost:8001/submit"],
+    # Endpoint only needed if agent needs to be accessed externally
+    # For Railway, Bureau handles internal communication
 )
 
 @component_generator.on_event("startup")
@@ -58,7 +61,7 @@ async def introduce(ctx: Context):
     """Announce agent on startup"""
     ctx.logger.info(f"[AI] Component Generator Agent started")
     ctx.logger.info(f"📍 Address: {component_generator.address}")
-    ctx.logger.info(f"🔌 Endpoint: http://localhost:8001")
+    ctx.logger.info(f"🔌 Running via Bureau (internal communication)")
 
 @component_generator.on_message(model=ComponentGenerationRequest)
 async def handle_generation_request(ctx: Context, sender: str, msg: ComponentGenerationRequest):

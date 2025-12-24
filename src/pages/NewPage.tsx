@@ -1,5 +1,5 @@
 // import React, { useMemo, useRef, useState } from 'react'
-// import { useGazeTracker } from '@/hooks/useGazeTracker'
+// import { useGaze } from '@/contexts/GazeContext'
 // import type { GazePoint } from '@/types'
 
 // type NodeKind = 'button' | 'input' | 'card' | 'text'
@@ -23,7 +23,7 @@
 // }
 
 // export default function NewPage() {
-//   const { currentGaze } = useGazeTracker()
+//   const { currentGaze } = useGaze()
 //   const [prompt, setPrompt] = useState("Add a login form here")
 //   const [nodes, setNodes] = useState<NodeDef[]>([])
 //   const canvasRef = useRef<HTMLDivElement>(null)
@@ -88,7 +88,7 @@
 // }
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { useGazeTracker } from '@/hooks/useGazeTracker'
+import { useGaze } from '@/contexts/GazeContext'
 import { useAIComponentGeneration } from '@/hooks/useAIComponentGeneration'
 import { parseInstructionSmart } from '@/utils/nlpParser'
 import { applyIntent, captureStyles } from '@/utils/styleApplier'
@@ -113,7 +113,7 @@ function makeNode(kind: NodeKind, at: GazePoint, props: Record<string, any> = {}
 }
 
 export default function NewPage() {
-  const { currentGaze, getElementAtGaze } = useGazeTracker()
+  const { currentGaze, getElementAtGaze } = useGaze()
   const [prompt, setPrompt] = useState('add a primary button that says "Save"')
   const [editText, setEditText] = useState('make this blue with rounded corners')
   const [nodes, setNodes] = useState<NodeDef[]>([])

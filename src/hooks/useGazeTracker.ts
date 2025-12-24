@@ -1,3 +1,15 @@
+/**
+ * @deprecated This hook is deprecated. Use `useGaze()` from `@/contexts/GazeContext` instead.
+ * 
+ * The GazeContext provides:
+ * - Auth-gated gaze activation
+ * - Route-aware tracking (stops when leaving /app)
+ * - Centralized state machine for gaze status
+ * - Per-user calibration persistence
+ * 
+ * This file is kept for internal use by GazeContext only.
+ */
+
 import { useEffect, useRef, useState, useMemo } from 'react'
 import type { GazePoint } from '../types'
 import {

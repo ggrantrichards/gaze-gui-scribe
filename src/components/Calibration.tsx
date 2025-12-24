@@ -5,9 +5,17 @@ import {
   toUnit, affineUnitToPx, quadUnitToPx, fitRBFWeightedNormalized,
   Viewport
 } from '../utils/calibrationUtils'
-import { useGazeTracker } from '../hooks/useGazeTracker'
+import { useGaze } from '../contexts/GazeContext'
+import { safeShowWebGazerCamera, safeHideWebGazerUI } from '@/utils/webgazerManager'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Target, Camera } from 'lucide-react'
 
-type Props = { onComplete: () => void; onSkip?: () => void }
+type Props = { 
+  onComplete: (accuracy?: number) => void
+  onSkip?: () => void 
+}
 
 const GRID: Pt[] = [
   { x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.9, y: 0.1 },
@@ -44,7 +52,29 @@ function shuffleKeepLast<T>(arr: T[], predicate: (v: T) => boolean): T[] {
 }
 
 export function Calibration({ onComplete, onSkip }: Props) {
-  const { currentGaze, completeCalibration, setAffine, setQuadratic, setRBFUnit, setFlipX, setViewport } = useGazeTracker()
+  const { currentGaze, setAffine, setQuadratic, setRBFUnit, setFlipX, setViewport } = useGaze()
+
+  // Show WebGazer camera preview with face overlay during calibration
+  // This allows users to see how their face is being tracked
+  useEffect(() => {
+    // Position camera preview in top-right corner (below the HUD card)
+    // The HUD is at top: 8, so we position the camera preview below it
+    const showCameraWithOverlay = () => {
+      safeShowWebGazerCamera({ x: window.innerWidth - 260, y: 340 })
+    }
+    
+    // Show immediately
+    showCameraWithOverlay()
+    
+    // Re-apply position periodically in case of window resize or WebGazer resetting elements
+    const interval = setInterval(showCameraWithOverlay, 500)
+    
+    return () => {
+      clearInterval(interval)
+      // Hide on unmount - CameraPreview will take over after calibration
+      safeHideWebGazerUI()
+    }
+  }, [])
 
   const seq = useMemo(() => shuffleKeepLast(GRID, p => p.x === 0.9 && p.y === 0.9), [])
   const [idx, setIdx] = useState(0)
@@ -55,6 +85,7 @@ export function Calibration({ onComplete, onSkip }: Props) {
   const [validationIdx, setValidationIdx] = useState(0)
   const [valSamples, setValSamples] = useState<number[]>([]) // store pixel errors for current dot
   const [overallErrors, setOverallErrors] = useState<number[]>([]) // all validation errors
+  const [faceDetected, setFaceDetected] = useState(false) // Track if we're receiving valid gaze data
 
   const recent = useRef<Pt[]>([]) // rolling px buffer
   const vref = useRef<Viewport>({ W: window.innerWidth, H: window.innerHeight })
@@ -87,12 +118,22 @@ export function Calibration({ onComplete, onSkip }: Props) {
   }), [current.x, current.y])
 
   // Rolling buffer of recent gaze points (px) for dwell gating (used only in validation)
+  // Also track face detection status based on gaze data quality
   useEffect(() => {
-    if (!currentGaze) return
+    if (!currentGaze) {
+      // No gaze data - face not detected
+      setFaceDetected(false)
+      return
+    }
+    
+    // Check if we're getting good quality data
+    const confidence = currentGaze.confidence ?? 0
+    setFaceDetected(confidence >= 0.5)
+    
     const p = { x: currentGaze.x, y: currentGaze.y }
     recent.current.push(p)
     if (recent.current.length > 64) recent.current.shift()
-  }, [currentGaze?.x, currentGaze?.y])
+  }, [currentGaze?.x, currentGaze?.y, currentGaze?.confidence])
 
   /**
    * Capture one burst:
@@ -117,12 +158,22 @@ export function Calibration({ onComplete, onSkip }: Props) {
     }
 
     // Collect samples (filtering low-confidence on the fly) with adaptive early-stop
+    // Higher confidence threshold for calibration (0.7) than regular tracking (0.4)
+    const CALIBRATION_CONFIDENCE_THRESHOLD = 0.7
     const samples: Pt[] = []
+    let lowConfidenceCount = 0
+    
     for (let i = 0; i < SAMPLES_PER_BURST; i++) {
-      if (currentGaze && (currentGaze.confidence ?? 1) >= 0.6) {
-        samples.push({ x: currentGaze.x, y: currentGaze.y })
+      if (currentGaze) {
+        const confidence = currentGaze.confidence ?? 1
+        if (confidence >= CALIBRATION_CONFIDENCE_THRESHOLD) {
+          samples.push({ x: currentGaze.x, y: currentGaze.y })
+        } else {
+          lowConfidenceCount++
+        }
       }
 
+      // Early stop if we have enough high-quality samples
       if (
         samples.length >= MIN_SAMPLES_PER_BURST &&
         (samples.length % 4 === 0) &&
@@ -133,6 +184,11 @@ export function Calibration({ onComplete, onSkip }: Props) {
 
       // eslint-disable-next-line no-await-in-loop
       await new Promise(r => setTimeout(r, SAMPLE_SPACING_MS))
+    }
+    
+    // Log calibration quality for debugging
+    if (lowConfidenceCount > samples.length) {
+      console.warn(`[Calibration] Low confidence samples: ${lowConfidenceCount}/${SAMPLES_PER_BURST}`)
     }
 
     // Require a minimum to avoid empty/too-small bursts
@@ -329,10 +385,11 @@ export function Calibration({ onComplete, onSkip }: Props) {
       }
 
       // Either targets met OR we've already tried both refinements -> finish
-      completeCalibration()
-      onComplete()
+      // Pass the final median accuracy to the parent
+      const finalAccuracy = Math.round(medAll)
+      onComplete(finalAccuracy)
     }
-  }, [valSamples, validationIdx, overallErrors, completeCalibration, onComplete, setQuadratic, setRBFUnit])
+  }, [valSamples, validationIdx, overallErrors, onComplete, setQuadratic, setRBFUnit])
 
   // keyboard shortcuts
   useEffect(() => {
@@ -357,57 +414,43 @@ export function Calibration({ onComplete, onSkip }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.18)',
-          zIndex: 99950, pointerEvents: 'none',
-        }}
-        aria-hidden="true"
-      />
-
       {/* Calibration/Validation dot */}
       <button
         onClick={validating ? nextValidation : advanceOrFit}
         disabled={validating && valSamples.length === 0}
         title={validating
-          ? (valSamples.length > 0 ? 'Click to advance to next validation point' : 'Looking at the dot... please wait')
-          : 'Look at the dot and click (or press Enter/Space) to record a burst'}
+          ? (valSamples.length > 0 ? 'Click to advance' : 'Collecting data...')
+          : 'Click to record burst'}
         style={{
           position: 'fixed',
           left: `${current.x * 100}vw`,
           top: `${current.y * 100}vh`,
           transform: 'translate(-50%, -50%)',
-          width: 30, height: 30, borderRadius: '50%',
+          width: 32, height: 32, borderRadius: '50%',
           background: validating 
-            ? (valSamples.length > 0 ? '#059669' : '#0b1220')  // green when ready in validation
-            : '#111827',
+            ? (valSamples.length > 0 ? '#10b981' : '#0f172a')
+            : '#0f172a',
           border: validating && valSamples.length > 0 
-            ? '4px solid #10b981' 
-            : '4px solid #6b7280',
+            ? '4px solid #34d399' 
+            : '4px solid #334155',
           boxShadow: validating && valSamples.length > 0
-            ? '0 0 0 8px rgba(16,185,129,0.3), 0 0 16px rgba(16,185,129,0.6)'
-            : '0 0 0 8px rgba(255,255,255,0.12)',
+            ? '0 0 0 8px rgba(16,185,129,0.2), 0 0 20px rgba(16,185,129,0.4)'
+            : '0 0 0 8px rgba(255,255,255,0.1)',
           cursor: validating && valSamples.length === 0 ? 'wait' : 'pointer', 
           zIndex: 99998, 
           pointerEvents: 'auto',
-          opacity: validating && valSamples.length === 0 ? 0.6 : 1,
-          transition: 'all 0.3s ease',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       />
 
-      {/* Under-dot press/burst counter (calibration only) */}
+      {/* Under-dot counter */}
       {!validating && (
         <div
+          className="fixed text-[11px] font-bold text-slate-500 z-[99998] pointer-events-none text-center w-20"
           style={{
-            position: 'fixed',
             left: `${current.x * 100}vw`,
-            top: `calc(${current.y * 100}vh + 36px)`,
-            transform: 'translate(-50%, 0)',
-            fontSize: 12,
-            color: '#cbd5e1',
-            zIndex: 99998,
-            pointerEvents: 'none',
+            top: `calc(${current.y * 100}vh + 32px)`,
+            transform: 'translateX(-50%)',
           }}
         >
           {pressedCount} / {BURSTS_PER_POINT}
@@ -415,65 +458,105 @@ export function Calibration({ onComplete, onSkip }: Props) {
       )}
 
       {/* HUD */}
-      <div
+      <div className="fixed top-8 right-8 w-[400px] z-[99960] pointer-events-auto animate-in slide-in-from-right-8 duration-500">
+        <Card className="shadow-2xl border-slate-200/60 bg-white/95 backdrop-blur-md">
+          <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50/50 rounded-t-xl">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center">
+                <Target className="w-5 h-5 text-white" />
+              </div>
+              {validating ? 'Validate Accuracy' : 'Calibration'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-5 space-y-4">
+            {!validating ? (
+              <>
+                {/* Face Detection Status */}
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                  faceDetected 
+                    ? 'bg-green-50 text-green-700 border border-green-200' 
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${faceDetected ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
+                  {faceDetected 
+                    ? 'Face detected - Ready to calibrate' 
+                    : 'Looking for face... Center your face in camera'}
+                </div>
+                
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Look directly at the dot and <b>click it</b> {BURSTS_PER_POINT} times. 
+                  Keep your head as steady as possible.
+                </p>
+                <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <span>Target {idx + 1} of {seq.length}</span>
+                  <Badge variant="secondary" className="font-mono">{burst} / {BURSTS_PER_POINT}</Badge>
+                </div>
+                <div className="pt-2 flex flex-col gap-3">
+                  <label className="flex items-center gap-3 text-sm font-medium text-slate-700 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500" 
+                      checked={showCrosshair} 
+                      onChange={e => setShowCrosshair(e.target.checked)} 
+                    /> 
+                    Show real-time crosshair
+                  </label>
+                  <p className="text-[10px] text-slate-400 italic">
+                    Press <b>F</b> if horizontal movement appears mirrored.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Focus on the dot. Once it turns <b>green</b>, click it to proceed.
+                </p>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Progress</span>
+                    <span className="font-bold">{validationIdx + 1} / {VALIDATION_DOTS.length}</span>
+                  </div>
+                  {valSamples.length > 0 && (
+                    <div className="flex justify-between text-xs pt-2 border-t border-slate-200">
+                      <span className="text-slate-500">Accuracy (Median)</span>
+                      <span className={`font-bold ${median(valSamples) <= TARGET_MEDIAN_PX ? 'text-green-600' : 'text-amber-600'}`}>
+                        {Math.round(median(valSamples))}px
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button 
+                    className="flex-1 bg-primary-600 hover:bg-primary-700" 
+                    onClick={nextValidation}
+                    disabled={valSamples.length === 0}
+                  >
+                    {valSamples.length === 0 ? 'Collecting data...' : 'Next Point'}
+                  </Button>
+                  <Button variant="outline" onClick={() => setFlipX((prev: boolean) => !prev as any)}>
+                    Flip X (F)
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Camera Preview Label - positioned above WebGazer container */}
+      <div 
+        className="fixed z-[99991] pointer-events-none animate-in fade-in duration-300"
         style={{
-          position: 'fixed', top: 24, right: 24, color: '#e2e8f0',
-          background: 'rgba(15,23,42,0.94)', border: '1px solid #475569',
-          borderRadius: 12, padding: '14px 16px', width: 380,
-          zIndex: 99960, pointerEvents: 'auto',
+          right: 16,
+          top: 318,
+          width: 240,
         }}
       >
-        {!validating ? (
-          <>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>Calibration</div>
-            <p style={{ color: '#cbd5e1', fontSize: 14, margin: '4px 0 8px' }}>
-              Look directly at each dot and <b>click</b> it {BURSTS_PER_POINT} times
-              (or press Enter/Space). Keep your head steady during each click.
-            </p>
-            <div style={{ color: '#94a3b8', fontSize: 13 }}>
-              Point <b>{idx + 1}</b> of {seq.length} • Burst {burst} / {BURSTS_PER_POINT}
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <input type="checkbox" checked={showCrosshair} onChange={e => setShowCrosshair(e.target.checked)} /> Show crosshair
-              </label>
-              <div style={{ fontSize: 12, color: '#94a3b8' }}>Press <b>F</b> if movement looks mirrored</div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>Validate mapping</div>
-            <p style={{ fontSize: 14, color: '#cbd5e1', margin: '4px 0 8px' }}>
-              Look at each dot briefly, then <b>click it</b> (or press Enter/Space) to move to the next point. 
-              {valSamples.length === 0 && <span style={{ color: '#fbbf24' }}> Collecting data...</span>}
-              {valSamples.length > 0 && <span style={{ color: '#10b981' }}> ✓ Ready to advance</span>}
-            </p>
-            <div style={{ marginTop: 4, color: '#94a3b8' }}>
-              Validation point {validationIdx + 1} / {VALIDATION_DOTS.length}
-            </div>
-            {valSamples.length > 0 && (
-              <div style={{ marginTop: 6, fontSize: 12 }}>
-                Median: <b>{Math.round(median(valSamples))} px</b> •
-                P95: <b>{(() => {
-                  const s = valSamples.slice().sort((a,b)=>a-b)
-                  const i = Math.floor(0.95*(s.length-1))
-                  return Math.round(s[i] ?? 0)
-                })()} px</b> • Targets: {TARGET_MEDIAN_PX}/{TARGET_P95_PX} px
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button 
-                className="btn" 
-                onClick={nextValidation}
-                disabled={valSamples.length === 0}
-                style={{ opacity: valSamples.length === 0 ? 0.5 : 1 }}
-              >
-                {valSamples.length === 0 ? 'Collecting...' : 'Next Point'}
-              </button>
-              <button className="btn secondary" onClick={() => setFlipX((prev: boolean) => !prev as any)}>Toggle Flip X (F)</button>
-            </div>
-          </>
-        )}
+        <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-white text-xs font-medium rounded-t-lg border border-b-0 border-blue-400/40">
+          <Camera className="w-3.5 h-3.5 text-blue-400" />
+          <span>Face Tracking Preview</span>
+          <div className={`ml-auto w-2 h-2 rounded-full ${faceDetected ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
+        </div>
       </div>
 
       {/* Optional crosshair */}
