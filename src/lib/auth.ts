@@ -12,7 +12,8 @@ import {
   sendEmailVerification,
   sendPasswordResetEmail,
   User,
-  UserCredential
+  UserCredential,
+  signInWithRedirect,
 } from 'firebase/auth'
 import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from './firebase'
@@ -75,21 +76,17 @@ export async function signInWithEmail(
 /**
  * Sign in with Google
  */
-export async function signInWithGoogle(): Promise<UserCredential> {
-  const userCredential = await signInWithPopup(auth, googleProvider)
-  
-  // Check if this is a new user
-  const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid))
-  
-  if (!userDoc.exists()) {
-    // Create profile for new Google user
-    await createUserProfile(userCredential.user)
-  } else {
-    // Update last login for existing user
-    await updateLastLogin(userCredential.user.uid)
+export async function signInWithGoogle() {
+  try {
+    return await signInWithPopup(auth, googleProvider)
+  } catch (error: any) {
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+      console.warn('Popup failed, falling back to redirect login')
+      await signInWithRedirect(auth, googleProvider)
+    } else {
+      throw error
+    }
   }
-  
-  return userCredential
 }
 
 /**
